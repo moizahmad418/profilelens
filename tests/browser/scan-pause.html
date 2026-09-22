@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Scan loop: pause, resume and stop</title>
+  <script src="mock-extension.js"></script>
+  <script>
+    // A running two-step scan in this tab. The fake background answers advance like the real one.
+    const task = { platform: 'test', status: 'running', steps: ['t:one', 't:two'], index: 0, found: 0, startedAt: Date.now(), rangeLabel: '7D', cutoffTs: 0 };
+    window.__hello = { task, track: false };
+    const realSend = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = function (msg) {
+      if (msg.type === 'scan:advance') {
+        window.__messages.push(JSON.parse(JSON.stringify(msg)));
+        task.index++;
+        return Promise.resolve(task.index < task.steps.length ? Object.assign({}, task) : null);
+      }
+      if (msg.type === 'scan:navigate') return Promise.resolve({ ok: true });
+      if (msg.type === 'scan:status') return Promise.resolve({ status: task.index < task.steps.length ? 'running' : 'done' });
+      return realSend.call(this, msg);
+    };
+  </script>
+  <script src="../../src/lib/common.js"></script>
+  <script src="../../src/content/overlay.js"></script>
+  <script src="../../src/content/scanner.js"></script>
+</head>
+<body style="font: 13px system-ui; margin: 16px">
+  <h1>Scan loop: pause, resume and stop</h1>
+  <div id="out"></div>
+  <script>
+    const SIT = window.SIT;
+    const session = SIT.createSession();
+    const saver = SIT.createSaver(session);
+    const log = [];
+    let ticks = 0;
+    // Each step "collects" an item every 100ms, 12 times, waiting whenever the scan is paused.
+    const step = (label) => ({
+      label,
+      url: () => location.href,
+      rounds: 0,
+      async run(ctx) {
+        for (let i = 0; i < 12 && !ctx.shouldStop(); i++) {
+          await ctx.whilePaused();
+          ticks++;
+          saver.push([{ id: label + ':' + i, platform: 'x', kind: 'post', direction: 'mine', createdAt: Date.now() }]);
+          ctx.tick({ count: session.count() });
+          await SIT.sleep(100);
+        }
+        return true;
+      },
+    });
+    const adapter = {
+      platform: 'test', label: 'Test', session, saver,
+      waitForMe: async () => ({ handle: 'alex' }),
+      ready: async () => {},
+      onPause: () => log.push('pause'),
+      onResume: () => log.push('resume'),
+      onStop: () => log.push('stop'),
+      steps: { 't:one': step('one'), 't:two': step('two') },
+    };
+
+    let mode = null;
+    let ticksAtPause = 0;
+    let ticksAfterPause = 0;
+    let pausedReply = null;
+    let resumedReply = null;
+    SIT.startTab(adapter).then((m) => { mode = m; });
+    setTimeout(() => {
+      window.__onMessage({ type: 'scan:paused' }, {}, (r) => { pausedReply = r; });
+      ticksAtPause = ticks;
+    }, 500);
+    setTimeout(() => { ticksAfterPause = ticks; }, 1400);
+    setTimeout(() => { window.__onMessage({ type: 'scan:resumed' }, {}, (r) => { resumedReply = r; }); }, 1500);
+
+    setTimeout(() => {
+      const advances = window.__messages.filter((m) => m.type === 'scan:advance');
+      const saved = Object.keys(window.__upserted());
+      window.__report([
+        { name: 'this tab runs the scan', actual: mode, expected: 'scan' },
+        { name: 'pausing is acknowledged after saving', actual: pausedReply, expected: { ok: true } },
+        { name: 'nothing is collected while paused', actual: ticksAfterPause - ticksAtPause <= 1, expected: true },
+        { name: 'what was collected before the pause was saved', actual: window.__messages.some((m) => m.type === 'records:upsert'), expected: true },
+        { name: 'resume is acknowledged', actual: resumedReply, expected: { ok: true } },
+        { name: 'the adapter hears pause then resume', actual: log, expected: ['pause', 'resume'] },
+        { name: 'the scan continues where it stopped and finishes both steps', actual: advances.map((m) => m.found), expected: [12, 12] },
+        { name: 'every item is saved once', actual: saved.length, expected: 24 },
+        { name: 'progress is reported for the popup', actual: window.__messages.some((m) => m.type === 'scan:progress' && m.progress > 0), expected: true },
+        { name: 'after the scan nothing more is saved', actual: saver.mode(), expected: 'off' },
+      ]);
+    }, 5500);
+  </script>
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profile Lens</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="card" id="app">
+    <header class="top">
+      <div class="brand">
+        <img class="brand-mark" src="../../icons/icon-48.png" alt="" width="22" height="22">
+        <span class="brand-name">Profile Lens</span>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn" id="btn-back" type="button" aria-label="Back to stats" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-settings" type="button" aria-label="Settings">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.4 2.5h3.2l.4 2.1c.5.2 1 .5 1.4.8l2-.7 1.6 2.8-1.6 1.4a5.6 5.6 0 0 1 0 1.6l1.6 1.4-1.6 2.8-2-.7c-.4.3-.9.6-1.4.8l-.4 2.1H8.4L8 14.8c-.5-.2-1-.5-1.4-.8l-2 .7L3 11.9l1.6-1.4a5.6 5.6 0 0 1 0-1.6L3 7.5l1.6-2.8 2 .7c.4-.3.9-.6 1.4-.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="10" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <nav class="views" id="view-nav" role="tablist" aria-label="Views">
+      <button type="button" role="tab" id="nav-stats" data-view="stats" aria-controls="view-stats">Dashboard</button>
+      <button type="button" role="tab" id="nav-scans" data-view="scans" aria-controls="view-scans">Scans</button>
+    </nav>
+
+    <!-- ============ Stats view ============ -->
+    <section id="view-stats" role="tabpanel" aria-labelledby="nav-stats">
+      <div class="snapshot-banner" id="snapshot-banner" hidden>
+        <div class="snapshot-text">
+          <strong id="snapshot-title"></strong>
+          <span id="snapshot-time"></span>
+          <span class="snapshot-note">Stats exactly as they were when this scan finished.</span>
+        </div>
+        <button type="button" class="btn btn-small" id="snapshot-back">Back to latest stats</button>
+      </div>
+      <div class="filters">
+        <div class="seg" role="radiogroup" aria-label="Platform" id="platform-seg">
+          <button type="button" role="radio" data-platform="all">All</button>
+          <button type="button" role="radio" data-platform="linkedin">LinkedIn</button>
+          <button type="button" role="radio" data-platform="x">X</button>
+        </div>
+        <div class="ranges" role="radiogroup" aria-label="Time range" id="range-seg">
+          <button type="button" role="radio" class="chip" data-days="1" aria-label="Today" title="Today">1D</button>
+          <button type="button" role="radio" class="chip" data-days="3" aria-label="Last 3 days" title="Last 3 days">3D</button>
+          <button type="button" role="radio" class="chip" data-days="7" aria-label="Last 7 days" title="Last 7 days">7D</button>
+          <button type="button" role="radio" class="chip" data-days="10" aria-label="Last 10 days" title="Last 10 days">10D</button>
+          <button type="button" role="radio" class="chip" data-days="30" aria-label="Last 30 days" title="Last 30 days">30D</button>
+          <span class="chip chip-select" id="month-chip">
+            <select id="month-select" aria-label="Month"></select>
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </div>
+        <p class="caption" id="range-caption"></p>
+        <p class="caption coverage-note" id="coverage-note" hidden></p>
+      </div>
+
+      <div id="empty" class="empty" hidden>
+        <h2>No stats yet</h2>
+        <p>Stats appear after your first scan. Pick a range above (1D, 3D, 7D…), then click <b>Scan LinkedIn</b> or <b>Scan X</b> below. The scan covers the range you picked.</p>
+      </div>
+
+      <div id="stats-body">
+        <h2 class="section-label">Impressions</h2>
+        <div class="kpis">
+          <article class="tile">
+            <h3 class="tile-label"><span class="key key-post" aria-hidden="true"></span>Posts</h3>
+            <p class="tile-value" id="kpi-post">0</p>
+            <p class="tile-sub" id="kpi-post-sub"></p>
+          </article>
+          <article class="tile">
+            <h3 class="tile-label"><span class="key key-comment" aria-hidden="true"></span>Comments</h3>
+            <p class="tile-value" id="kpi-comment">0</p>
+            <p class="tile-sub" id="kpi-comment-sub"></p>
+          </article>
+          <article class="tile">
+            <h3 class="tile-label"><span class="key key-reply" aria-hidden="true"></span>Replies</h3>
+            <p class="tile-value" id="kpi-reply">0</p>
+            <p class="tile-sub" id="kpi-reply-sub"></p>
+          </article>
+        </div>
+
+        <section class="block chart-block" aria-labelledby="chart-title">
+          <div class="block-head">
+            <h3 id="chart-title">By publish day</h3>
+            <ul class="legend">
+              <li><span class="key key-post" aria-hidden="true"></span>Posts</li>
+              <li><span class="key key-comment" aria-hidden="true"></span>Comments</li>
+              <li><span class="key key-reply" aria-hidden="true"></span>Replies</li>
+            </ul>
+          </div>
+          <div class="chart" id="chart"></div>
+          <div class="tooltip" id="tooltip" role="presentation" hidden></div>
+        </section>
+
+        <section class="block" aria-labelledby="breakdown-title">
+          <div class="block-head"><h3 id="breakdown-title">Breakdown</h3></div>
+          <table class="breakdown">
+            <thead>
+              <tr><th scope="col">Type</th><th scope="col" class="num">Items</th><th scope="col" class="num">Impressions</th><th scope="col" class="num">Avg</th></tr>
+            </thead>
+            <tbody id="breakdown-body"></tbody>
+          </table>
+          <p class="footnote" id="breakdown-note" hidden></p>
+          <div class="platform-split" id="platform-split" hidden></div>
+        </section>
+
+        <section class="block" aria-labelledby="received-title">
+          <div class="block-head"><h3 id="received-title">Engagement</h3></div>
+          <div class="received">
+            <div><span class="received-value" id="recv-comments">0</span><span class="received-label">comments on your posts</span></div>
+            <div><span class="received-value" id="recv-replies">0</span><span class="received-label">responses to your comments &amp; replies</span></div>
+            <button type="button" class="received-action" id="recv-waiting">
+              <span class="received-value" id="recv-waiting-value">0</span><span class="received-label">waiting for your reply</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="block" aria-label="Your items">
+          <div class="tabs" role="tablist" aria-label="Item type">
+            <button type="button" role="tab" id="tab-posts" data-tab="posts" aria-controls="item-panel">Posts</button>
+            <button type="button" role="tab" id="tab-comments" data-tab="comments" aria-controls="item-panel">Comments</button>
+            <button type="button" role="tab" id="tab-replies" data-tab="replies" aria-controls="item-panel">Replies</button>
+          </div>
+          <div id="item-panel" role="tabpanel">
+            <div class="subtabs" id="subtabs" role="radiogroup" aria-label="Filter" hidden>
+              <button type="button" role="radio" data-sub="all" id="sub-all">All</button>
+              <button type="button" role="radio" data-sub="needs" id="sub-needs">Needs reply</button>
+            </div>
+            <p class="insight" id="insight"></p>
+            <ul class="levels" id="level-legend" aria-label="Impression levels compared with your usual for that type"></ul>
+            <ol class="items" id="item-list"></ol>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============ Scans view ============ -->
+    <section id="view-scans" role="tabpanel" aria-labelledby="nav-scans" hidden>
+      <div class="scans-head">
+        <h2 class="view-title">Scan history</h2>
+        <p class="hint">Open a scan to see your stats exactly as they were when it finished. The last 20 scans are kept.</p>
+        <p class="hint full-scan-row">Scan LinkedIn and Scan X cover the range picked on the Dashboard (1D, 3D, 7D, a month…). A full scan covers the last 30 days:
+          <button type="button" class="link-btn" id="full-linkedin">Full LinkedIn scan</button> ·
+          <button type="button" class="link-btn" id="full-x">Full X scan</button>
+        </p>
+      </div>
+      <p class="items-empty" id="scans-empty" hidden>No scans yet. Run a scan below and it will appear here.</p>
+      <ol class="scan-list" id="scan-list"></ol>
+    </section>
+
+    <!-- ============ Settings view ============ -->
+    <section id="view-settings" hidden>
+      <h2 class="view-title">Settings</h2>
+
+      <div class="field">
+        <label for="set-x">X handle</label>
+        <input id="set-x" type="text" placeholder="Detected automatically" autocomplete="off" spellcheck="false">
+        <p class="hint" id="detected-x"></p>
+      </div>
+
+      <div class="field">
+        <label for="set-li">LinkedIn profile URL</label>
+        <input id="set-li" type="text" placeholder="Detected automatically" autocomplete="off" spellcheck="false">
+        <p class="hint" id="detected-li"></p>
+      </div>
+
+      <label class="check">
+        <input id="set-expand" type="checkbox">
+        <span>During a LinkedIn scan, open my posts and comment threads to find comments and replies I received</span>
+      </label>
+
+      <div class="field">
+        <span class="label">Impression levels</span>
+        <p class="hint">Each item is compared with your usual (median) impressions for that type on that platform: very high (green) is 2× or more, high (blue) 1.25×, medium (yellow) around your usual, low (orange) under 0.75×, very low (red) under 0.4×. The number of filled bars shows the same level. Levels appear once you have 5 items of a type.</p>
+      </div>
+
+      <div class="field">
+        <span class="label">Your data</span>
+        <p class="hint" id="data-summary"></p>
+        <div class="btn-row">
+          <button type="button" class="btn" id="export-csv">Export CSV</button>
+          <button type="button" class="btn" id="export-json">Export JSON</button>
+          <button type="button" class="btn btn-danger" id="clear-data">Clear all data</button>
+        </div>
+      </div>
+
+      <p class="hint privacy">Everything is stored only in this browser. Nothing is sent to any server.</p>
+    </section>
+
+    <footer class="foot">
+      <p class="hint scan-range-note" id="scan-range-note"></p>
+      <div class="scan-row" id="scan-row">
+        <button type="button" class="btn btn-primary" id="scan-linkedin">Scan LinkedIn</button>
+        <button type="button" class="btn btn-primary" id="scan-x">Scan X</button>
+      </div>
+      <div class="scan-status" id="scan-status" hidden>
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="scan-status-text"></span>
+        <button type="button" class="btn btn-small" id="scan-pause">Pause</button>
+        <button type="button" class="btn btn-small" id="scan-stop">Stop</button>
+      </div>
+      <p class="scan-notice" id="scan-notice" hidden>Please don’t switch tabs while the scan is running. It can lead to incomplete or misleading stats, so the scan pauses whenever its tab isn’t in front.</p>
+      <p class="status" id="status" aria-live="polite"></p>
+    </footer>
+  </main>
+
+  <script src="../lib/common.js"></script>
+  <script src="../lib/stats.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

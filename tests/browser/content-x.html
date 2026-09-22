@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>X content script wiring test</title>
+  <script>document.cookie = 'twid=u%3D100; path=/';</script>
+  <script src="mock-extension.js"></script>
+  <script src="../../src/lib/common.js"></script>
+  <script src="../../src/lib/x-parser.js"></script>
+  <script src="../../src/content/overlay.js"></script>
+  <script src="../../src/content/scanner.js"></script>
+  <script src="../../src/content/x-content.js"></script>
+</head>
+<body style="font: 13px system-ui; margin: 16px">
+  <h1>X content script wiring test</h1>
+  <nav><a data-testid="AppTabBar_Profile_Link" href="/alex">Profile</a></nav>
+  <div id="out"></div>
+
+  <!-- A rendered post whose API payload was never captured (DOM fallback). -->
+  <article data-testid="tweet">
+    <a href="/alex/status/1570361570108649529"><time datetime="2022-09-15T10:39:08.000Z">Sep 15</time></a>
+    <div>Posted before the hook saw it</div>
+    <a href="/alex/status/1570361570108649529/analytics" aria-label="2,468 views. View post analytics">2,468</a>
+  </article>
+
+  <script>
+    function tweet(id, userId, handle, text, extra) {
+      return {
+        __typename: 'Tweet', rest_id: id,
+        core: { user_results: { result: { __typename: 'User', rest_id: userId, core: { screen_name: handle }, legacy: {} } } },
+        views: { count: String(extra.views || 0), state: 'EnabledWithCount' },
+        legacy: Object.assign({ id_str: id, user_id_str: userId, full_text: text, created_at: 'Mon Sep 14 10:00:00 +0000 2026', conversation_id_str: id }, extra.legacy || {}),
+      };
+    }
+    const payload = { data: { user: { result: { timeline: { timeline: { instructions: [{ entries: [
+      { content: { itemContent: { tweet_results: { result: tweet('1001', '100', 'alex', 'My post', { views: 1200 }) } } } },
+      { content: { itemContent: { tweet_results: { result: tweet('2001', '200', 'alice', 'Alice post', { views: 50 }) } } } },
+      { content: { itemContent: { tweet_results: { result: tweet('1002', '100', 'alex', '@alice hi', { views: 30, legacy: { in_reply_to_status_id_str: '2001', in_reply_to_user_id_str: '200', conversation_id_str: '2001' } }) } } } },
+      { content: { itemContent: { tweet_results: { result: tweet('3001', '300', 'bob', '@alex congrats', { views: 9, legacy: { in_reply_to_status_id_str: '1001', in_reply_to_user_id_str: '100', conversation_id_str: '1001' } }) } } } },
+    ] }] } } } } } };
+
+    window.postMessage({ __sit: 'net', url: '/i/api/graphql/x/UserTweetsAndReplies', body: JSON.stringify(payload) }, location.origin);
+    // X re-renders constantly; any DOM change triggers the fallback scan.
+    setTimeout(() => document.body.appendChild(document.createElement('div')), 1000);
+
+    setTimeout(() => {
+      const recs = window.__upserted();
+      const pick = (id) => recs[id] ? [recs[id].kind, recs[id].direction, recs[id].impressions] : null;
+      const identity = window.__messages.filter((m) => m.type === 'identity:set').pop();
+      const idCheck = { name: 'identity from cookie + nav link', actual: identity && identity.identity, expected: { id: '100', handle: 'alex' } };
+      if (window.__mode !== 'scan') {
+        // Open this page with ?idle or ?track: outside a scan nothing is added to your stats.
+        const seen = window.__upserted('activity:seen');
+        return window.__report([
+          idCheck,
+          { name: 'nothing saved outside a scan', actual: Object.keys(recs), expected: [] },
+          { name: 'own comments reported only when the extension tracks them', actual: Object.keys(seen).sort(), expected: window.__mode === 'track' ? ['x:1002'] : [] },
+          { name: 'no scan card on the page', actual: !!document.getElementById('sit-overlay'), expected: false },
+        ]);
+      }
+      window.__report([
+        idCheck,
+        { name: 'ids saved', actual: Object.keys(recs).sort(), expected: ['x:1001', 'x:1002', 'x:1570361570108649529', 'x:3001'] },
+        { name: 'my post', actual: pick('x:1001'), expected: ['post', 'mine', 1200] },
+        { name: 'my comment', actual: pick('x:1002'), expected: ['comment', 'mine', 30] },
+        { name: 'comment received', actual: pick('x:3001'), expected: ['comment', 'received', 9] },
+        { name: 'DOM fallback post', actual: pick('x:1570361570108649529'), expected: ['post', 'mine', 2468] },
+        { name: 'scan check ran', actual: window.__messages.some((m) => m.type === 'scan:hello'), expected: true },
+        { name: 'scan card shows the stay-on-this-tab notice', actual: !!document.getElementById('sit-overlay'), expected: true },
+      ]);
+    }, 7000);
+  </script>
+</body>
+</html>

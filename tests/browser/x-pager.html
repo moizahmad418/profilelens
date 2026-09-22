@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>X fast scan (timeline paging) test</title>
+  <script>
+    document.cookie = 'twid=u%3D100; path=/';
+    window.__sitTestHost = 'x';
+    const DAY = 86400000;
+    const NOW = Date.now();
+    const iso = (daysAgo) => new Date(NOW - daysAgo * DAY).toUTCString().replace('GMT', '+0000');
+    const tweet = (id, daysAgo) => ({
+      __typename: 'Tweet', rest_id: id,
+      core: { user_results: { result: { __typename: 'User', rest_id: '100', core: { screen_name: 'alex' }, legacy: { created_at: 'Mon Jan 01 00:00:00 +0000 2012' } } } },
+      views: { count: '50', state: 'EnabledWithCount' },
+      legacy: { id_str: id, user_id_str: '100', full_text: 'reply ' + id, created_at: iso(daysAgo), conversation_id_str: '9' + id, in_reply_to_status_id_str: '9' + id, in_reply_to_user_id_str: '200', in_reply_to_screen_name: 'alice' },
+    });
+    const page = (tweets, bottom) => ({ data: { user: { result: { timeline: { timeline: { instructions: [{ type: 'TimelineAddEntries', entries:
+      tweets.map((t, i) => ({ entryId: 'tweet-' + i, content: { itemContent: { tweet_results: { result: t } } } }))
+        .concat(bottom ? [{ entryId: 'cursor-bottom-1', content: { entryType: 'TimelineTimelineCursor', value: bottom, cursorType: 'Bottom' } }] : []),
+    }] } } } } } });
+    // Page 1 is what the site loads itself; the scan pages 2 and 3; page 3 reaches past the 7-day window.
+    const PAGES = {
+      '': page([tweet('1001', 1), tweet('1002', 2)], 'c1'),
+      c1: page([tweet('1003', 3), tweet('1004', 5)], 'c2'),
+      c2: page([tweet('1005', 9), tweet('1006', 12)], 'c3'),
+      c3: page([tweet('1007', 20)], 'c4'),
+    };
+    window.__requests = [];
+    window.fetch = function (input, init) {
+      const url = new URL(String(input.url || input), location.href);
+      const vars = JSON.parse(url.searchParams.get('variables') || '{}');
+      const headers = (init && init.headers) || {};
+      window.__requests.push({ cursor: vars.cursor || '', auth: headers.authorization || headers.Authorization || null });
+      const body = PAGES[vars.cursor || ''] || page([], null);
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    };
+  </script>
+  <script src="../../src/injected/net-hook.js"></script>
+  <script src="mock-extension.js"></script>
+  <script src="../../src/lib/common.js"></script>
+  <script src="../../src/lib/x-parser.js"></script>
+  <script src="../../src/content/overlay.js"></script>
+  <script src="../../src/content/scanner.js"></script>
+  <script src="../../src/content/x-content.js"></script>
+</head>
+<body style="font: 13px system-ui; margin: 16px">
+  <h1>X fast scan (timeline paging) test</h1>
+  <nav><a data-testid="AppTabBar_Profile_Link" href="/alex">Profile</a></nav>
+  <div id="out"></div>
+  <script>
+    const base = '/i/api/graphql/AbC123/UserRepliesTimeline?features=%7B%7D&variables=' + encodeURIComponent(JSON.stringify({ userId: '100', count: 20 }));
+    // The site's own first request (with its headers).
+    fetch(base, { headers: { authorization: 'Bearer test-token', 'x-csrf-token': 'csrf' } });
+
+    const progress = [];
+    let done = null;
+    window.addEventListener('message', (e) => {
+      if (!e.data || e.data.__sit !== 'pager' || e.data.id !== 't1') return;
+      if (e.data.done) done = e.data; else progress.push(e.data.page);
+    });
+    setTimeout(() => {
+      window.postMessage({ __sit: 'cmd', op: 'paginate', id: 't1', names: ['UserTweetsAndReplies', 'UserRepliesTimeline'], cutoff: NOW - 7 * DAY, maxPages: 10, delayMs: 150 }, location.origin);
+    }, 800);
+
+    setTimeout(() => {
+      const recs = window.__upserted();
+      window.__report([
+        { name: 'paging finished at the scan window', actual: done && [done.ok, done.reason, done.pages, done.op], expected: [true, 'cutoff', 2, 'UserRepliesTimeline'] },
+        { name: 'requests followed the cursors', actual: window.__requests.map((r) => r.cursor), expected: ['', 'c1', 'c2'] },
+        { name: 'the site\'s headers were reused', actual: window.__requests.map((r) => r.auth), expected: ['Bearer test-token', 'Bearer test-token', 'Bearer test-token'] },
+        { name: 'progress was reported per page', actual: progress, expected: [1, 2] },
+        { name: 'every paged post was saved', actual: Object.keys(recs).sort(), expected: ['x:1001', 'x:1002', 'x:1003', 'x:1004', 'x:1005', 'x:1006'] },
+        { name: 'paged items are classified', actual: recs['x:1005'] && [recs['x:1005'].kind, recs['x:1005'].direction, recs['x:1005'].impressions], expected: ['comment', 'mine', 50] },
+      ]);
+    }, 4500);
+  </script>
+</body>
+</html>

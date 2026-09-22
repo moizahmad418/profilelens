@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LinkedIn 2026 layout parser test</title>
+  <style>
+    body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; }
+    #fixture { display: none; }
+    .pass { color: #006300; } .fail { color: #d03b3b; font-weight: 600; }
+  </style>
+</head>
+<body>
+<h1>LinkedIn 2026 layout parser test</h1>
+<p>Open this file directly in a browser. Results also land in <code>window.__results</code>.</p>
+<pre id="out"></pre>
+
+<!-- Markup modelled on LinkedIn's server-driven layout as observed in September 2026:
+     hashed class names, componentkey attributes, analytics links on own posts. -->
+<div id="fixture">
+  <!-- Activity page: my post with an analytics row -->
+  <div role="listitem" componentkey="update-card-focusAAAFeedType_CREATOR_PROFILE_ALL_CONTENT_VIEW">
+    <div class="_a1"><h2 class="_x">Feed post</h2></div>
+    <div><a href="https://www.linkedin.com/in/alex-morgan/"><p>Alex Morgan</p></a><span>• You</span></div>
+    <p>Sample headline</p>
+    <p>15h •</p>
+    <div><span>SAMPLE POST HEADLINE.</span><span>Sample body line</span></div>
+    <button>… more</button>
+    <div componentkey="CgsIgoCgnuGyirLNAQ-replaceableCommentToolsAAA">
+      <button>Like</button><button>Comment</button><button>Repost</button><button>Send</button>
+    </div>
+    <p>12 comments</p>
+    <a componentkey="uuid-1" href="https://www.linkedin.com/analytics/post-summary/urn:li:activity:7400000000000000001/">
+      <div aria-label="View analytics"><div aria-label="Content analytics"><p>1,061 impressions</p></div><span>View analytics</span></div>
+    </a>
+  </div>
+
+  <!-- Activity page: my post whose analytics row has not rendered yet (id from the key, "You" badge) -->
+  <div role="listitem" componentkey="update-card-focusBBBFeedType_CREATOR_PROFILE_ALL_CONTENT_VIEW">
+    <h2>Feed post</h2>
+    <a href="https://www.linkedin.com/in/alex-morgan/"><p>Alex Morgan</p></a><span>• You</span>
+    <p>1d • Edited •</p>
+    <span>Second post body</span>
+    <div componentkey="CgsIhICgnuGyirLNAQ-replaceableCommentToolsBBB"><button>Like</button></div>
+  </div>
+
+  <!-- Comments page: someone else's post with my comment inside the card -->
+  <div role="listitem" componentkey="update-card-focusCCCFeedType_CREATOR_PROFILE_COMMENTS">
+    <p><a href="https://www.linkedin.com/in/alex-morgan/">Alex Morgan</a> commented</p>
+    <a href="https://www.linkedin.com/in/jamie-rivera/"><p>Jamie Rivera</p></a><span>• 3rd+</span>
+    <p>1d •</p>
+    <span>Sample post by someone else.</span>
+    <div componentkey="commentsSectionContainerXYZ">
+      <div componentkey="replaceableComment_urn:li:comment:(activity:7400000000000000100,7400000000000000101)">
+        <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000100,7400000000000000101)">
+          <a href="https://www.linkedin.com/in/alex-morgan/"><span>Alex Morgan, Open to work  You</span></a>
+          <p>Alex Morgan • You</p>
+          <p>1d</p>
+          <span>sample comment text</span>
+          <span>Reaction button state: no reaction</span><button>Like</button><button>Reply</button>
+          <p>662 impressions</p>
+        </div>
+      </div>
+      <div componentkey="CommentComponentReference_urn:li:comment:(ugcPost:7400000000000000099,7400000000000000102)">
+        <a href="https://www.linkedin.com/in/alex-morgan/"><span>Alex Morgan</span></a>
+        <p>9h</p>
+        <a href="https://www.linkedin.com/in/jamie-rivera/">Jamie Rivera</a><span>💯</span>
+        <button>Like</button><p>24 impressions</p>
+      </div>
+      <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000100,7400000000000000103)">
+        <a href="https://www.linkedin.com/in/sara-khan/"><span>Sara Khan</span></a>
+        <p>5h</p><span>Not mine and not on my post</span><p>40 impressions</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- A single post page: my post, with comments rendered outside the card -->
+<div id="post-page" style="display:none">
+  <div role="listitem" componentkey="update-card-focusDDD">
+    <a href="https://www.linkedin.com/in/alex-morgan/"><p>Alex Morgan</p></a><span>• You</span><p>2d •</p>
+    <span>My post with comments</span>
+    <a href="https://www.linkedin.com/analytics/post-summary/urn:li:activity:7400000000000000200/"><p>98 impressions</p></a>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(ugcPost:7400000000000000199,7400000000000000201)">
+    <a href="https://www.linkedin.com/in/sara-khan/"><span>Sara Khan</span></a><p>1d</p><span>Great write-up</span>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(ugcPost:7400000000000000199,7400000000000000202)">
+    <a href="https://www.linkedin.com/in/alex-morgan/"><span>Alex Morgan</span></a><p>20h</p><span>Thanks Sara</span><p>15 impressions</p>
+  </div>
+</div>
+
+<!-- Someone else's post page where I commented and the author answered -->
+<div id="other-post-page" style="display:none">
+  <div role="listitem" componentkey="update-card-focusEEE">
+    <a href="https://www.linkedin.com/in/jamie-rivera/"><p>Jamie Rivera</p></a><span>• 3rd+</span><p>1d •</p>
+    <span>Someone else's post</span>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000300,7400000000000000301)">
+    <a href="https://www.linkedin.com/in/alex-morgan/"><span>Alex Morgan</span></a><p>1d</p><span>My comment here</span><p>692 impressions</p>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000300,7400000000000000302)">
+    <a href="https://www.linkedin.com/in/jamie-rivera/"><span>Jamie Rivera</span></a><p>20h</p><span>Thanks!</span>
+  </div>
+</div>
+
+<script src="../../src/lib/common.js"></script>
+<script src="../../src/lib/li-parser.js"></script>
+<script>
+  (function () {
+    const me = { slug: 'alex-morgan', profileId: 'ACoAAB123', name: 'Alex Morgan' };
+    const now = Date.now();
+    const results = [];
+    const check = (name, actual, expected) => results.push({ name, ok: JSON.stringify(actual) === JSON.stringify(expected), actual, expected });
+    const pick = (byId, id, keys) => byId[id] ? Object.fromEntries(keys.map((k) => [k, byId[id][k]])) : null;
+
+    const activity = SIT.li.parseDocument(document.getElementById('fixture'), me, now, { path: '/in/alex-morgan/recent-activity/all/' });
+    const a = Object.fromEntries(activity.map((r) => [r.id, r]));
+    check('activity ids', Object.keys(a).sort(), [
+      'li:activity:7400000000000000001',
+      'li:activity:7400000000000000002',
+      'li:comment:7400000000000000101',
+      'li:comment:7400000000000000102',
+    ]);
+    check('my post from analytics link', pick(a, 'li:activity:7400000000000000001', ['kind', 'direction', 'impressions', 'replies', 'tsPrecise']),
+      { kind: 'post', direction: 'mine', impressions: 1061, replies: 12, tsPrecise: true });
+    check('post text', a['li:activity:7400000000000000001'] && a['li:activity:7400000000000000001'].text,
+      'SAMPLE POST HEADLINE. Sample body line');
+    check('post without analytics row: id from componentkey, mine via You badge', pick(a, 'li:activity:7400000000000000002', ['direction', 'impressions', 'text', 'tsPrecise']),
+      { direction: 'mine', impressions: null, text: 'Second post body', tsPrecise: true });
+    check('my comment on someone else\'s post', pick(a, 'li:comment:7400000000000000101', ['kind', 'direction', 'impressions', 'text', 'urn']),
+      { kind: 'comment', direction: 'mine', impressions: 662, text: 'sample comment text', urn: 'urn:li:comment:(activity:7400000000000000100,7400000000000000101)' });
+    check('my comment with a mention', pick(a, 'li:comment:7400000000000000102', ['direction', 'impressions', 'parentRef']),
+      { direction: 'mine', impressions: 24, parentRef: '7400000000000000099' });
+
+    const page = SIT.li.parseDocument(document.getElementById('post-page'), me, now, { path: '/feed/update/urn:li:activity:7400000000000000200/' });
+    const p = Object.fromEntries(page.map((r) => [r.id, r]));
+    check('post page ids', Object.keys(p).sort(), ['li:activity:7400000000000000200', 'li:comment:7400000000000000201', 'li:comment:7400000000000000202']);
+    check('comment received on my post page', pick(p, 'li:comment:7400000000000000201', ['kind', 'direction', 'impressions']), { kind: 'comment', direction: 'received', impressions: null });
+    check('my reply on my post page', pick(p, 'li:comment:7400000000000000202', ['direction', 'impressions']), { direction: 'mine', impressions: 15 });
+
+    check('comments on my post are marked as on my post', pick(p, 'li:comment:7400000000000000201', ['onMyPost', 'postAuthor']), { onMyPost: true, postAuthor: null });
+    check('my comment on someone else\'s post records the post author', pick(a, 'li:comment:7400000000000000101', ['onMyPost', 'postAuthor']), { onMyPost: false, postAuthor: 'Jamie Rivera' });
+
+    const otherPath = { path: '/feed/update/urn:li:activity:7400000000000000300/' };
+    const other = SIT.li.parseDocument(document.getElementById('other-post-page'), me, now, Object.assign({ keepOthers: true }, otherPath));
+    const o = Object.fromEntries(other.map((r) => [r.id, r]));
+    check('someone else\'s post page: ids', Object.keys(o).sort(), ['li:comment:7400000000000000301', 'li:comment:7400000000000000302']);
+    check('my comment there', pick(o, 'li:comment:7400000000000000301', ['direction', 'impressions', 'onMyPost', 'postAuthor']),
+      { direction: 'mine', impressions: 692, onMyPost: false, postAuthor: 'Jamie Rivera' });
+    check('others\' comments are kept as candidates for the reply check', pick(o, 'li:comment:7400000000000000302', ['direction', 'urn']),
+      { direction: 'other', urn: 'urn:li:comment:(activity:7400000000000000300,7400000000000000302)' });
+    const noKeep = SIT.li.parseDocument(document.getElementById('other-post-page'), me, now, otherPath);
+    check('without keepOthers, others\' comments are dropped', noKeep.map((r) => r.id), ['li:comment:7400000000000000301']);
+
+    const notPostPage = SIT.li.parseDocument(document.getElementById('post-page'), me, now, { path: '/feed/' });
+    check('outside a post page, others\' loose comments are ignored', notPostPage.some((r) => r.id === 'li:comment:7400000000000000201'), false);
+
+    const out = document.getElementById('out');
+    for (const r of results) {
+      const line = document.createElement('div');
+      line.className = r.ok ? 'pass' : 'fail';
+      line.textContent = (r.ok ? '✔ ' : '✖ ') + r.name + (r.ok ? '' : '\n   expected ' + JSON.stringify(r.expected) + '\n   actual   ' + JSON.stringify(r.actual));
+      out.appendChild(line);
+    }
+    const failed = results.filter((r) => !r.ok);
+    window.__results = { passed: results.length - failed.length, total: results.length, failed };
+  })();
+</script>
+</body>
+</html>

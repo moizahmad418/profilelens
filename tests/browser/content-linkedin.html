@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LinkedIn content script wiring test</title>
+  <script>
+    document.cookie = 'JSESSIONID="ajax:1234567890"; path=/';
+    // Stand-in for LinkedIn's own API, installed before the network hook wraps fetch.
+    window.__fetchLog = [];
+    window.fetch = function (input, init) {
+      const url = String(input.url || input);
+      window.__fetchLog.push({ url, csrf: init && init.headers && init.headers['csrf-token'] });
+      let body = {};
+      if (url.includes('/voyager/api/me')) {
+        body = { data: { '*miniProfile': 'urn:li:fs_miniProfile:ACoAAB123' }, included: [
+          { firstName: 'Alex', lastName: 'Morgan', publicIdentifier: 'alex-morgan', entityUrn: 'urn:li:fs_miniProfile:ACoAAB123' },
+        ] };
+      } else if (url.includes('/voyager/api/feed/comments')) {
+        body = { included: [{ entityUrn: 'urn:li:comment:(activity:7372000000000000000,7372200000000000000)', numImpressions: 91 }] };
+      }
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    };
+  </script>
+  <script src="../../src/injected/net-hook.js"></script>
+  <script src="mock-extension.js"></script>
+  <script src="../../src/lib/common.js"></script>
+  <script src="../../src/lib/li-parser.js"></script>
+  <script src="../../src/content/overlay.js"></script>
+  <script src="../../src/content/scanner.js"></script>
+  <script src="../../src/content/linkedin-content.js"></script>
+</head>
+<body style="font: 13px system-ui; margin: 16px">
+  <h1>LinkedIn content script wiring test</h1>
+  <div id="out"></div>
+
+  <div class="feed-shared-update-v2" data-urn="urn:li:activity:7372000000000000000">
+    <div class="update-components-actor">
+      <a class="update-components-actor__meta-link" href="https://www.linkedin.com/in/alex-morgan"><span class="update-components-actor__title"><span aria-hidden="true">Alex Morgan</span></span></a>
+    </div>
+    <div class="update-components-text">My post</div>
+    <span class="ca-entry-point__num-views"><strong>1,234</strong> impressions</span>
+    <div class="comments-comments-list">
+      <article class="comments-comment-entity" data-id="urn:li:comment:(activity:7372000000000000000,7372100000000000000)">
+        <div class="comments-comment-meta__description-container"><a href="https://www.linkedin.com/in/sara-khan"><span class="comments-comment-meta__description-title">Sara Khan</span></a></div>
+        <div class="comments-comment-item__main-content">Great post</div>
+        <div class="comments-replies-list">
+          <article class="comments-comment-entity comments-comment-entity--reply" data-id="urn:li:comment:(activity:7372000000000000000,7372200000000000000)">
+            <div class="comments-comment-meta__description-container"><a href="https://www.linkedin.com/in/alex-morgan"><span class="comments-comment-meta__description-title">Alex Morgan</span></a></div>
+            <div class="comments-comment-item__main-content">Thanks!</div>
+          </article>
+        </div>
+      </article>
+    </div>
+  </div>
+
+  <script>
+    // Simulate LinkedIn loading comment data that carries an impression count.
+    setTimeout(() => fetch('/voyager/api/feed/comments?q=x'), 1500);
+
+    setTimeout(() => {
+      const recs = window.__upserted();
+      const pick = (id) => recs[id] ? [recs[id].kind, recs[id].direction, recs[id].impressions] : null;
+      const meCall = window.__fetchLog.find((f) => f.url.includes('/voyager/api/me'));
+      window.__report([
+        { name: '/voyager/api/me called with csrf token', actual: meCall && meCall.csrf, expected: 'ajax:1234567890' },
+        { name: 'identity saved', actual: (window.__messages.find((m) => m.type === 'identity:set') || {}).identity, expected: { slug: 'alex-morgan', profileId: 'ACoAAB123', name: 'Alex Morgan' } },
+        { name: 'my post', actual: pick('li:activity:7372000000000000000'), expected: ['post', 'mine', 1234] },
+        { name: 'comment received', actual: pick('li:comment:7372100000000000000'), expected: ['comment', 'received', null] },
+        { name: 'my reply gets impressions from network hint', actual: pick('li:comment:7372200000000000000'), expected: ['reply', 'mine', 91] },
+      ]);
+    }, 8000);
+  </script>
+</body>
+</html>

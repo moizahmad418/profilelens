@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LinkedIn DOM parser test</title>
+  <style>
+    body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; }
+    #fixture { display: none; }
+    .pass { color: #006300; } .fail { color: #d03b3b; font-weight: 600; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+<h1>LinkedIn DOM parser test</h1>
+<p>Open with <code>npm run preview</code> → <code>/tests/browser/linkedin-dom.html</code>. Results also land in <code>window.__results</code>.</p>
+<pre id="out"></pre>
+
+<!-- Markup modelled on LinkedIn's profile "recent activity" pages. -->
+<div id="fixture">
+  <div class="scaffold-finite-scroll__content"><ul>
+
+    <!-- 1. My own post, with others' comments and my reply -->
+    <li class="profile-creator-shared-feed-update__container">
+      <div class="feed-shared-update-v2" data-urn="urn:li:activity:7372000000000000000">
+        <div class="update-components-actor">
+          <div class="update-components-actor__container">
+            <a class="update-components-actor__image" href="https://www.linkedin.com/in/alex-morgan?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3AACoAAB123"></a>
+            <div class="update-components-actor__content">
+              <a class="update-components-actor__meta-link" href="https://www.linkedin.com/in/alex-morgan?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3AACoAAB123">
+                <span class="update-components-actor__title"><span dir="ltr"><span aria-hidden="true">Alex Morgan</span><span class="visually-hidden">Alex Morgan</span></span></span>
+              </a>
+              <span class="update-components-actor__sub-description"><span aria-hidden="true">2d • Edited • </span></span>
+            </div>
+          </div>
+        </div>
+        <div class="feed-shared-update-v2__description">
+          <div class="update-components-text"><span>We hit 5,000 impressions on launch day. Here is the playbook.</span></div>
+        </div>
+        <div class="social-details-social-activity">
+          <ul class="social-details-social-counts">
+            <li class="social-details-social-counts__reactions"><button aria-label="38 reactions">38</button></li>
+            <li class="social-details-social-counts__comments"><button aria-label="4 comments on Alex Morgan’s post"><span>4 comments</span></button></li>
+          </ul>
+          <div class="content-analytics-entry-point">
+            <a href="/analytics/post-summary/urn:li:activity:7372000000000000000/">
+              <span class="ca-entry-point__num-views t-14"><strong>1,234</strong> impressions</span>
+            </a>
+          </div>
+          <div class="comments-comments-list">
+            <article class="comments-comment-entity" data-id="urn:li:comment:(activity:7372000000000000000,7372100000000000000)">
+              <div class="comments-comment-meta__container">
+                <a class="comments-comment-meta__image-link" href="https://www.linkedin.com/in/sara-khan"></a>
+                <div class="comments-comment-meta__description-container">
+                  <a href="https://www.linkedin.com/in/sara-khan"><span class="comments-comment-meta__description-title">Sara Khan</span></a>
+                </div>
+                <time class="comments-comment-meta__data">1d</time>
+              </div>
+              <div class="comments-comment-item__main-content"><span>Great playbook, 10/10 impressions from me</span></div>
+              <div class="comments-replies-list">
+                <article class="comments-comment-entity comments-comment-entity--reply" data-id="urn:li:comment:(activity:7372000000000000000,7372200000000000000)">
+                  <div class="comments-comment-meta__container">
+                    <a class="comments-comment-meta__image-link" href="https://www.linkedin.com/in/alex-morgan"></a>
+                    <div class="comments-comment-meta__description-container">
+                      <a href="https://www.linkedin.com/in/alex-morgan"><span class="comments-comment-meta__description-title">Alex Morgan</span></a>
+                    </div>
+                    <time class="comments-comment-meta__data">1d</time>
+                  </div>
+                  <div class="comments-comment-item__main-content"><a href="https://www.linkedin.com/in/sara-khan">Sara Khan</a> thank you!</div>
+                  <div class="comments-comment-social-bar"><span class="comments-comment-social-bar__impressions">88 impressions</span></div>
+                </article>
+                <article class="comments-comment-entity comments-comment-entity--reply" data-id="urn:li:comment:(activity:7372000000000000000,7372300000000000000)">
+                  <div class="comments-comment-meta__container">
+                    <a class="comments-comment-meta__image-link" href="https://www.linkedin.com/in/sara-khan"></a>
+                    <div class="comments-comment-meta__description-container">
+                      <a href="https://www.linkedin.com/in/sara-khan"><span class="comments-comment-meta__description-title">Sara Khan</span></a>
+                    </div>
+                  </div>
+                  <div class="comments-comment-item__main-content"><a href="https://www.linkedin.com/in/alex-morgan">Alex Morgan</a> anytime</div>
+                </article>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </li>
+
+    <!-- 2. Someone else's post that I reposted: not mine -->
+    <li class="profile-creator-shared-feed-update__container">
+      <div class="feed-shared-update-v2" data-urn="urn:li:activity:7371500000000000000">
+        <div class="update-components-header"><a href="https://www.linkedin.com/in/alex-morgan">Alex Morgan</a> reposted this</div>
+        <div class="update-components-actor">
+          <a class="update-components-actor__meta-link" href="https://www.linkedin.com/in/john-doe">
+            <span class="update-components-actor__title"><span aria-hidden="true">John Doe</span></span>
+          </a>
+        </div>
+        <div class="update-components-text">John's post. 900 impressions on this one.</div>
+        <div class="content-analytics-entry-point"><span>900 impressions</span></div>
+      </div>
+    </li>
+
+    <!-- 3. Alice's post that I commented on (comments activity page) -->
+    <li class="profile-creator-shared-feed-update__container">
+      <div class="feed-shared-update-v2" data-urn="urn:li:activity:7371000000000000000">
+        <div class="update-components-header"><a href="https://www.linkedin.com/in/alex-morgan">Alex Morgan</a> commented on this</div>
+        <div class="update-components-actor">
+          <a class="update-components-actor__meta-link" href="https://www.linkedin.com/in/alice-li">
+            <span class="update-components-actor__title"><span aria-hidden="true">Alice Li</span></span>
+          </a>
+        </div>
+        <div class="update-components-text">Alice's thoughts on hiring</div>
+        <div class="comments-comments-list">
+          <article class="comments-comment-entity" data-id="urn:li:comment:(urn:li:ugcPost:7371000000000000001,7371100000000000000)">
+            <div class="comments-comment-meta__container">
+              <div class="comments-comment-meta__description-container">
+                <a href="https://www.linkedin.com/in/alex-morgan/"><span class="comments-comment-meta__description-title">Alex Morgan</span></a>
+              </div>
+            </div>
+            <div class="comments-comment-item__main-content">Totally agree with point two</div>
+            <button aria-label="45 impressions, view comment analytics">45 impressions</button>
+            <div class="comments-replies-list">
+              <article class="comments-comment-entity comments-comment-entity--reply" data-id="urn:li:comment:(urn:li:ugcPost:7371000000000000001,7371200000000000000)">
+                <div class="comments-comment-meta__description-container">
+                  <a href="https://www.linkedin.com/in/bob-stone"><span class="comments-comment-meta__description-title">Bob Stone</span></a>
+                </div>
+                <div class="comments-comment-item__main-content">Why point two?</div>
+              </article>
+            </div>
+          </article>
+          <article class="comments-comment-entity" data-id="urn:li:comment:(urn:li:ugcPost:7371000000000000001,7371300000000000000)">
+            <div class="comments-comment-meta__description-container">
+              <a href="https://www.linkedin.com/in/carol-west"><span class="comments-comment-meta__description-title">Carol West</span></a>
+            </div>
+            <div class="comments-comment-item__main-content">Nice one Alice</div>
+          </article>
+        </div>
+      </div>
+    </li>
+
+    <!-- 4. My quote-repost (ugcPost urn) wrapping someone else's post; impressions in aria-label -->
+    <li class="profile-creator-shared-feed-update__container">
+      <div data-id="urn:li:ugcPost:7370000000000000000">
+        <div class="feed-shared-update-v2" data-urn="urn:li:ugcPost:7370000000000000000">
+          <div class="update-components-actor">
+            <a class="update-components-actor__meta-link" href="/in/ACoAAB123">
+              <span class="update-components-actor__title"><span aria-hidden="true">Alex Morgan</span></span>
+            </a>
+          </div>
+          <div class="update-components-text">Worth reading ↓</div>
+          <div class="update-components-mini-update-v2" data-urn="urn:li:activity:7369000000000000000">
+            <div class="update-components-actor">
+              <a class="update-components-actor__meta-link" href="https://www.linkedin.com/in/john-doe"><span class="update-components-actor__title">John Doe</span></a>
+            </div>
+            <span>77 impressions</span>
+          </div>
+          <a class="analytics-entry-point" aria-label="View analytics: 2.3K impressions" href="/analytics/"></a>
+        </div>
+      </div>
+    </li>
+  </ul></div>
+</div>
+
+<script src="../../src/lib/common.js"></script>
+<script src="../../src/lib/li-parser.js"></script>
+<script>
+  (function () {
+    const me = { slug: 'alex-morgan', profileId: 'ACoAAB123', name: 'Alex Morgan' };
+    const fixture = document.getElementById('fixture');
+    const records = SIT.li.parseDocument(fixture, me, Date.now());
+    const byId = Object.fromEntries(records.map((r) => [r.id, r]));
+    const results = [];
+    const check = (name, actual, expected) => {
+      const ok = JSON.stringify(actual) === JSON.stringify(expected);
+      results.push({ name, ok, actual, expected });
+    };
+    const pick = (id, keys) => byId[id] ? Object.fromEntries(keys.map((k) => [k, byId[id][k]])) : null;
+    const K = ['kind', 'direction', 'impressions'];
+
+    check('record ids', Object.keys(byId).sort(), [
+      'li:activity:7372000000000000000',
+      'li:comment:7371100000000000000',
+      'li:comment:7371200000000000000',
+      'li:comment:7372100000000000000',
+      'li:comment:7372200000000000000',
+      'li:comment:7372300000000000000',
+      'li:ugcPost:7370000000000000000',
+    ]);
+    check('my post', pick('li:activity:7372000000000000000', K.concat('replies')), { kind: 'post', direction: 'mine', impressions: 1234, replies: 4 });
+    check('my post text', byId['li:activity:7372000000000000000'] && byId['li:activity:7372000000000000000'].text, 'We hit 5,000 impressions on launch day. Here is the playbook.');
+    check('my post date from id', byId['li:activity:7372000000000000000'] && byId['li:activity:7372000000000000000'].tsPrecise, true);
+    check('comment received on my post', pick('li:comment:7372100000000000000', K), { kind: 'comment', direction: 'received', impressions: null });
+    check('my reply under that comment', pick('li:comment:7372200000000000000', K), { kind: 'reply', direction: 'mine', impressions: 88 });
+    check('reply to my reply (via mention)', pick('li:comment:7372300000000000000', K), { kind: 'reply', direction: 'received', impressions: null });
+    check('my comment on Alice\'s post', pick('li:comment:7371100000000000000', K), { kind: 'comment', direction: 'mine', impressions: 45 });
+    check('my comment url', byId['li:comment:7371100000000000000'] && byId['li:comment:7371100000000000000'].url,
+      'https://www.linkedin.com/feed/update/urn:li:ugcPost:7371000000000000001/?commentUrn=' + encodeURIComponent('urn:li:comment:(urn:li:ugcPost:7371000000000000001,7371100000000000000)'));
+    check('reply received on my comment', pick('li:comment:7371200000000000000', K), { kind: 'reply', direction: 'received', impressions: null });
+    check('my quote repost', pick('li:ugcPost:7370000000000000000', K), { kind: 'post', direction: 'mine', impressions: 2300 });
+
+    const out = document.getElementById('out');
+    const failed = results.filter((r) => !r.ok);
+    for (const r of results) {
+      const line = document.createElement('div');
+      line.className = r.ok ? 'pass' : 'fail';
+      line.textContent = (r.ok ? '✔ ' : '✖ ') + r.name + (r.ok ? '' : '\n   expected ' + JSON.stringify(r.expected) + '\n   actual   ' + JSON.stringify(r.actual));
+      out.appendChild(line);
+    }
+    const summary = document.createElement('p');
+    summary.textContent = (results.length - failed.length) + ' / ' + results.length + ' passed';
+    out.appendChild(summary);
+    window.__results = { passed: results.length - failed.length, total: results.length, failed, records };
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LinkedIn thread detection wiring test</title>
+  <script>
+    document.cookie = 'JSESSIONID="ajax:1234567890"; path=/';
+    // Stand-in for LinkedIn's API. Response shapes follow a live voyagerSocialDashComments
+    // response (Sept 2026) with made-up ids.
+    const POST = '7400000000000000300';
+    const MINE = '7400000000000000301';
+    const THEIRS = '7400000000000000302';
+    const STRANGER = '7400000000000000303';
+    const counts = (id, impressions, replies) => ({
+      entityUrn: 'urn:li:fsd_socialActivityCounts:urn:li:comment:(activity:' + POST + ',' + id + ')',
+      numImpressions: impressions, numComments: replies,
+    });
+    const comment = (id, parent, impressions, replies) => ({
+      data: {
+        entityUrn: 'urn:li:fsd_comment:(' + id + ',urn:li:activity:' + POST + ')',
+        parentCommentUrn: parent ? 'urn:li:fsd_comment:(' + parent + ',urn:li:activity:' + POST + ')' : null,
+        parentCommentBackendUrn: parent ? 'urn:li:comment:(activity:' + POST + ',' + parent + ')' : null,
+        threadUrn: null,
+      },
+      included: [counts(id, impressions, replies)],
+    });
+    window.__fetchLog = [];
+    window.fetch = function (input) {
+      const url = decodeURIComponent(String(input.url || input));
+      window.__fetchLog.push(url);
+      let body = {};
+      if (url.includes('/voyager/api/me')) {
+        body = { included: [{ firstName: 'Alex', lastName: 'Morgan', publicIdentifier: 'alex-morgan', entityUrn: 'urn:li:fs_miniProfile:ACoAAB123' }] };
+      } else if (url.includes('voyagerSocialDashComments')) {
+        if (url.includes('(' + MINE + ',')) body = comment(MINE, null, 700, 1);
+        else if (url.includes('(' + THEIRS + ',')) body = comment(THEIRS, MINE, 12, 0);
+        else if (url.includes('(' + STRANGER + ',')) body = comment(STRANGER, null, 5, 0);
+      }
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    };
+  </script>
+  <script src="../../src/injected/net-hook.js"></script>
+  <script src="mock-extension.js"></script>
+  <script src="../../src/lib/common.js"></script>
+  <script src="../../src/lib/li-parser.js"></script>
+  <script src="../../src/content/overlay.js"></script>
+  <script src="../../src/content/scanner.js"></script>
+  <script src="../../src/content/linkedin-content.js"></script>
+</head>
+<body style="font: 13px system-ui; margin: 16px">
+  <h1>LinkedIn thread detection wiring test</h1>
+  <div id="out"></div>
+
+  <!-- Someone else's post: my comment, the author's reply to it, and an unrelated comment -->
+  <div role="listitem" componentkey="update-card-focusEEE">
+    <a href="https://www.linkedin.com/in/jamie-rivera/"><p>Jamie Rivera</p></a><span>• 3rd+</span><p>1d •</p>
+    <span>Someone else's post</span>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000300,7400000000000000301)">
+    <a href="https://www.linkedin.com/in/alex-morgan/"><span>Alex Morgan</span></a><p>1d</p><span>My comment here</span><p>692 impressions</p>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000300,7400000000000000302)">
+    <a href="https://www.linkedin.com/in/jamie-rivera/"><span>Jamie Rivera</span></a><p>20h</p><span>Thanks!</span>
+  </div>
+  <div componentkey="CommentComponentReference_urn:li:comment:(activity:7400000000000000300,7400000000000000303)">
+    <a href="https://www.linkedin.com/in/someone-else/"><span>Someone Else</span></a><p>2h</p><span>Unrelated top-level comment</span>
+  </div>
+
+  <script>
+    // The content script reads location.pathname: pretend this is a LinkedIn post page.
+    history.replaceState(null, '', '/feed/update/urn:li:activity:7400000000000000300/');
+    setTimeout(() => {
+      const recs = window.__upserted();
+      const pick = (id, keys) => recs[id] ? Object.fromEntries(keys.map((k) => [k, recs[id][k]])) : null;
+      window.__report([
+        // In this harness the fake API also passes through the page network hook, which sends
+        // impression-only partial updates; the background ignores those for unknown items.
+        { name: 'saved ids (no unrelated comment)', actual: Object.keys(recs).filter((id) => recs[id].kind).sort(), expected: ['li:comment:' + MINE, 'li:comment:' + THEIRS] },
+        { name: 'my comment: API impressions, reply count, own thread', actual: pick('li:comment:' + MINE, ['kind', 'direction', 'impressions', 'replies', 'threadRef', 'postAuthor']),
+          expected: { kind: 'comment', direction: 'mine', impressions: 700, replies: 1, threadRef: MINE, postAuthor: 'Jamie Rivera' } },
+        { name: 'author\'s answer becomes a reply to my comment', actual: pick('li:comment:' + THEIRS, ['kind', 'direction', 'threadRef', 'authorName']),
+          expected: { kind: 'reply', direction: 'received', threadRef: MINE, authorName: 'Jamie Rivera' } },
+        { name: 'every comment on the page was checked with the API', actual: window.__fetchLog.filter((u) => u.includes('voyagerSocialDashComments')).length, expected: 3 },
+      ]);
+    }, 9000);
+  </script>
+</body>
+</html>
