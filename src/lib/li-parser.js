@@ -54,8 +54,36 @@
   const COMMENT_TEXT_SEL = '.comments-comment-item__main-content, .comments-comment-item-content-body, .update-components-text';
   const COMMENT_TIME_SEL = 'time, .comments-comment-meta__data, .comments-comment-item__timestamp';
 
-  const IMPR_BEFORE = /(\d[\d.,  ]*\s*[KkMm]?)\s*impressions?\b/i;
-  const IMPR_AFTER = /impressions?\s*:?\s*(\d[\d.,]*\s*[KkMm]?)(?![\w])/i;
+  // ---------- languages ----------
+  // The words LinkedIn prints around the numbers, in the languages its UI is commonly set
+  // to. Everything that reads the page goes through these, so a scan works in any of them.
+  const LANG = {
+    impressions: ['impressions?', 'impresiones', 'impressões', 'impressioni', 'Impressionen', 'vertoningen', 'gösterim'],
+    comments: ['comments?', 'comentarios?', 'commentaires?', 'comentários?', 'commenti', 'commento', 'Kommentare?', 'reacties?', 'yorum'],
+    you: ['You', 'Tú', 'Vous', 'Sie', 'Du', 'Você', 'Tu', 'Jij', 'Siz'],
+    // "See previous replies" / "Load more comments"
+    more: ['(see|load|show|view) (previous|more) (replies|comments)', 'ver (respuestas anteriores|más comentarios)', 'cargar más comentarios',
+      'voir les réponses précédentes', 'charger plus de commentaires', 'vorherige antworten anzeigen', 'weitere kommentare laden',
+      'ver (respostas anteriores|mais comentários)', 'carregar mais comentários', 'vedi risposte precedenti', 'carica altri commenti'],
+    // buttons under a post, where the body text stops
+    stop: ['…\\s*more', '\\.\\.\\.\\s*more', 'Like', 'Comment', 'Repost', 'Send', 'Reply', 'Reaction button state.*', 'Open reactions menu', 'View analytics',
+      '…\\s*más', 'Recomendar', 'Comentar', 'Compartir', 'Enviar', 'Responder', '…\\s*plus', 'J’aime', "J'aime", 'Commenter', 'Republier', 'Envoyer', 'Répondre',
+      '…\\s*mehr', 'Gefällt mir', 'Kommentieren', 'Reposten', 'Senden', 'Antworten', '…\\s*mais', 'Gostei', 'Republicar', 'Curtir',
+      '…\\s*altro', 'Consiglia', 'Commenta', 'Diffondi', 'Invia', 'Rispondi', 'Ver analíticas', 'Voir les statistiques', 'Analysen anzeigen'],
+    // relative-time units: "3d", "2 sem", "5 Std."
+    time: ['mo', 'yr', 's', 'm', 'h', 'd', 'w', 'y', 'min', 'sem', 'mes', 'a', 'j', 'mois', 'an', 'Min\\.?', 'Std\\.?', 'T', 'Wo\\.?', 'Mo\\.?', 'J', 'g', 'sett', 'mesi', 'anni', 'u', 'wk', 'mnd', 'jr', 'dk', 'sa', 'gün', 'hf', 'ay', 'yıl'],
+    now: ['now', 'ahora', 'maintenant', 'jetzt', 'agora', 'adesso', 'nu', 'şimdi'],
+    edited: ['Edited', 'Editado', 'Modifié', 'Bearbeitet', 'Modificato', 'Bewerkt', 'Düzenlendi'],
+  };
+  const alt = (list) => '(?:' + list.join('|') + ')';
+  const IMPR_WORD = alt(LANG.impressions);
+  const COMMENT_WORD = alt(LANG.comments);
+  const IMPR_BEFORE = new RegExp('(\\d[\\d.,\\u00a0\\u202f ]*\\s*[KkMm]?)\\s*' + IMPR_WORD + '\\b', 'i');
+  const IMPR_AFTER = new RegExp(IMPR_WORD + '\\s*:?\\s*(\\d[\\d.,]*\\s*[KkMm]?)(?![\\w])', 'i');
+  const IMPR_ANY = new RegExp(IMPR_WORD, 'i');
+  const COMMENTS_IN = new RegExp('(\\d[\\d.,]*\\s*[KkMm]?)\\s*' + COMMENT_WORD + '\\b', 'i');
+  const YOU_BADGE = new RegExp('^•?\\s*' + alt(LANG.you) + '$', 'i');
+  const MORE_CONTROL = new RegExp('^(?:' + LANG.more.join('|') + ')$', 'i');
 
   // ---------- identity ----------
 
@@ -182,7 +210,7 @@
     const walker = doc.createTreeWalker(scope, 4 /* NodeFilter.SHOW_TEXT */);
     let node;
     while ((node = walker.nextNode())) {
-      if (!/impression/i.test(node.nodeValue)) continue;
+      if (!IMPR_ANY.test(node.nodeValue)) continue;
       const parent = node.parentElement;
       if (!parent || !owns(parent) || parent.closest(TEXT_BODY_SEL)) continue;
       let el = parent;
@@ -203,7 +231,7 @@
     for (const el of candidates) {
       if (!owns(el)) continue;
       const label = (el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '');
-      const m = label.match(/(\d[\d.,]*\s*[KkMm]?)\s*comments?\b/i);
+      const m = label.match(COMMENTS_IN);
       if (m) return SIT.parseCount(m[1]);
     }
     return null;
@@ -217,7 +245,7 @@
     for (const el of candidates) {
       if (!owns(el)) continue;
       const label = (el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '');
-      if (/\d[\d.,]*\s*[KkMm]?\s*comments?\b/i.test(label)) return el;
+      if (COMMENTS_IN.test(label)) return el;
     }
     return null;
   }
@@ -366,10 +394,24 @@
 
   const CARD2_SEL = '[componentkey^="update-card-"]';
   const COMMENT2_SEL = '[componentkey^="CommentComponentReference_"]';
-  const IMPR_ONLY = /^(\d[\d.,]*\s*[KkMm]?)\s+impressions?$/i;
-  const COMMENTS_ONLY = /^(\d[\d.,]*\s*[KkMm]?)\s+comments?$/i;
-  const TIME_ONLY = /^(\d+\s*(mo|yr|s|m|h|d|w|y)|now)(\s*•)?(\s*Edited)?(\s*•)?$/i;
-  const BODY_STOP = /^(…\s*more|\.\.\.\s*more|Like|Comment|Repost|Send|Reply|Reaction button state.*|Open reactions menu|View analytics)$/i;
+  const IMPR_ONLY = new RegExp('^(\\d[\\d.,  ]*\\s*[KkMm]?)\\s+' + IMPR_WORD + '$', 'i');
+  const COMMENTS_ONLY = new RegExp('^(\\d[\\d.,  ]*\\s*[KkMm]?)\\s+' + COMMENT_WORD + '$', 'i');
+  const TIME_ONLY = new RegExp('^(\\d+\\s*' + alt(LANG.time) + '|' + alt(LANG.now) + ')(\\s*•)?(\\s*' + alt(LANG.edited) + ')?(\\s*•)?$', 'i');
+  const BODY_STOP = new RegExp('^(' + LANG.stop.join('|') + ')$', 'i');
+
+  // What kind of post a card holds, from what it embeds. Class names are hashed, so this
+  // goes by tags and the media hosts LinkedIn uses.
+  function typeOfCard(card, owns, values) {
+    const has = (sel) => Array.from(card.querySelectorAll(sel)).some(owns);
+    if (has('video, [data-vjs-player], [componentkey*="video" i], [class*="video" i]')) return 'video';
+    if (has('iframe, [componentkey*="document" i], [class*="document" i]')) return 'document';
+    if (has('[componentkey*="poll" i], [class*="poll" i]') || values.some((v) => /^\\d[\\d.,]*\\s*(votes?|votos?|voix|Stimmen|voti)$/i.test(v))) return 'poll';
+    const images = Array.from(card.querySelectorAll('img[src*="feedshare"], img[src*="/dms/image/"], img[src*="licdn.com/dms/"]')).filter((img) => owns(img) && !/profile-displayphoto|company-logo|EntityPhoto/i.test(img.getAttribute('src') || ''));
+    if (has('[componentkey*="carousel" i], [class*="carousel" i]') || images.length > 1) return images.length > 1 ? 'carousel' : 'document';
+    if (images.length === 1) return 'image';
+    if (has('.update-components-article, a[href*="lnkd.in/"], [componentkey*="article" i], [class*="article" i]')) return 'link';
+    return 'text';
+  }
 
   // The comment-tools componentkey starts with a base64 protobuf whose first
   // field holds the post id, zigzag-encoded (stored value = id × 2).
@@ -441,7 +483,7 @@
     const header = timeIdx >= 0 ? values.slice(0, timeIdx) : values.slice(0, 6);
     // Analytics links only exist on your own posts; the "• You" badge covers cards
     // whose analytics row hasn't rendered yet.
-    const mine = !!analytics || header.some((v) => /^•?\s*You$/i.test(v));
+    const mine = !!analytics || header.some((v) => YOU_BADGE.test(v));
     const info = { card, ids, mine, record: null };
     if (!mine) return info;
 
@@ -460,6 +502,7 @@
       tsPrecise: !!idTs,
       impressions: countFrom(values, IMPR_ONLY),
       replies: countFrom(values, COMMENTS_ONLY),
+      postType: typeOfCard(card, owns, values),
       source: 'dom',
       confidence: 1,
     };
@@ -651,6 +694,9 @@
     COMMENT_SEL,
     profileKey,
     matchesMe,
+    LANG,
+    MORE_CONTROL,
+    typeOfCard,
     extractMe,
     parsePostUrn,
     parseCommentUrn,

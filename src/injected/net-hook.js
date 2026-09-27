@@ -23,7 +23,7 @@
 
   function relevant(text) {
     if (typeof text !== 'string' || !text || text.length > MAX_BODY) return false;
-    return isX ? text.includes('"created_at"') : /impression/i.test(text);
+    return isX ? text.includes('"created_at"') : /impression|impresion|impressõ|Impressionen|vertoning|gösterim|followerCount|followersCount/i.test(text);
   }
 
   function emit(url, text) {

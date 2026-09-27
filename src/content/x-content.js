@@ -12,6 +12,7 @@
   const pending = [];
   let me = null;
   let handleOverride = '';
+  let lastFollowers = null;
 
   // ---------- network payloads from net-hook.js ----------
 
@@ -51,6 +52,13 @@
 
     const viewer = SIT.x.extractViewer(json);
     if (viewer) setMe(viewer);
+    if (me && saver.mode() === 'scan') {
+      const followers = SIT.x.extractFollowers(json, me);
+      if (followers != null && followers !== lastFollowers) {
+        lastFollowers = followers;
+        SIT.send({ type: 'followers:set', platform: 'x', count: followers });
+      }
+    }
 
     if (!me) {
       if (pending.length < 80) pending.push(json);

@@ -39,7 +39,7 @@
   function readEmbeddedData() {
     for (const code of document.querySelectorAll('code[id^="bpr-guid-"], code[id^="datalet-bpr-guid-"]')) {
       const text = code.textContent || '';
-      if (!/impression/i.test(text)) continue;
+      if (!/impression|impresion|impressõ|Impressionen|vertoning|gösterim/i.test(text)) continue;
       try { addHints(JSON.parse(text)); } catch (_) { /* ignore */ }
     }
   }
@@ -118,6 +118,23 @@
 
     me = next;
     if (fresh) SIT.send({ type: 'identity:set', platform: 'linkedin', identity: fresh });
+  }
+
+  // Your follower count, once per page load, from LinkedIn's network-info endpoint.
+  let followersSent = false;
+  async function reportFollowers() {
+    if (followersSent || !me || !(me.profileId || me.slug) || saver.mode() !== 'scan') return;
+    followersSent = true;
+    const token = csrfToken();
+    if (!token) return;
+    try {
+      const who = encodeURIComponent(me.profileId || me.slug);
+      const res = await fetch('/voyager/api/identity/profiles/' + who + '/networkinfo', { credentials: 'include', headers: voyagerHeaders(token) });
+      if (!res.ok) return;
+      const json = await res.json();
+      const n = json && (typeof json.followersCount === 'number' ? json.followersCount : json.data && typeof json.data.followersCount === 'number' ? json.data.followersCount : null);
+      if (n != null) SIT.send({ type: 'followers:set', platform: 'linkedin', count: n });
+    } catch (_) { /* not important enough to retry */ }
   }
 
   function waitForMe(timeoutMs) {
@@ -295,7 +312,7 @@
   // "See previous replies" / "Load more comments" are short text elements (a <p> in the
   // 2026 layout). Only small leaf elements are checked, which keeps this cheap on long pages.
   function expandControls() {
-    const pattern = /^(see|load|show|view) (previous|more) (replies|comments)$/i;
+    const pattern = SIT.li.MORE_CONTROL;
     const out = [];
     for (const e of document.querySelectorAll('button, a, [role="button"], p, span')) {
       if (e.childElementCount > 2) continue;
@@ -436,6 +453,7 @@
   SIT.onReady(async () => {
     await initIdentity();
     if ((await SIT.startTab(adapter)) === 'off') return;
+    reportFollowers();
     readEmbeddedData();
     parseNow();
     new MutationObserver(scheduleParse).observe(document.body, { childList: true, subtree: true });

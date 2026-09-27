@@ -61,6 +61,19 @@
       (typeof node.user_id_str === 'string' || (node.user && typeof node.user.id_str === 'string'));
   }
 
+  // What kind of post it is, from what it carries: video, image, poll, link card, quote.
+  function typeOfTweet(legacy, node) {
+    const media = (legacy.extended_entities && legacy.extended_entities.media) || (legacy.entities && legacy.entities.media) || [];
+    if (media.some((m) => m && (m.type === 'video' || m.type === 'animated_gif'))) return 'video';
+    if (media.some((m) => m && m.type === 'photo')) return media.length > 1 ? 'carousel' : 'image';
+    const card = node && node.card && node.card.legacy;
+    const cardName = String((card && card.name) || '');
+    if (/poll/i.test(cardName)) return 'poll';
+    if (node && (node.quoted_status_result || legacy.quoted_status_id_str)) return 'quote';
+    if (cardName || ((legacy.entities && legacy.entities.urls) || []).some((u) => u && u.expanded_url && !/(x|twitter)\.com\//.test(u.expanded_url))) return 'link';
+    return 'text';
+  }
+
   function fromGraphql(node) {
     const legacy = node.legacy;
     const user = node.core && node.core.user_results && node.core.user_results.result;
@@ -82,6 +95,7 @@
       inReplyToHandle: legacy.in_reply_to_screen_name || null,
       conversationId: legacy.conversation_id_str || null,
       isRetweet: !!legacy.retweeted_status_result || /^RT @/.test(legacy.full_text || ''),
+      postType: typeOfTweet(legacy, node),
     };
   }
 
@@ -105,6 +119,7 @@
       inReplyToHandle: node.in_reply_to_screen_name || null,
       conversationId: node.conversation_id_str || null,
       isRetweet: !!node.retweeted_status_id_str || !!node.retweeted_status || /^RT @/.test(node.full_text || node.text || ''),
+      postType: typeOfTweet(node, { quoted_status_result: node.quoted_status || null }),
     };
   }
 
@@ -162,6 +177,25 @@
   }
 
   // Finds the signed-in account in a payload (the "Viewer" query), if present.
+  // Your follower count from any user object of yours in the payload (profile pages carry it).
+  function extractFollowers(json, me) {
+    if (!me || (!me.id && !me.handle)) return null;
+    const stack = [json];
+    let guard = 0;
+    while (stack.length && guard++ < 200000) {
+      const node = stack.pop();
+      if (!node || typeof node !== 'object') continue;
+      if (isGraphqlUser(node) && ((me.id && node.rest_id === me.id) || (!me.id && SIT.eqi(userHandle(node), me.handle)))) {
+        const counts = node.relationship_counts || {};
+        const legacy = node.legacy || {};
+        const n = typeof counts.followers === 'number' ? counts.followers : typeof legacy.followers_count === 'number' ? legacy.followers_count : null;
+        if (n != null) return n;
+      }
+      for (const k in node) if (node[k] && typeof node[k] === 'object') stack.push(node[k]);
+    }
+    return null;
+  }
+
   function extractViewer(json) {
     const v = json && json.data && json.data.viewer;
     const user = v && v.user_results && v.user_results.result;
@@ -228,6 +262,7 @@
         createdAt: t.createdAt,
         tsPrecise: true,
         impressions: t.views,
+        postType: c.kind === 'post' ? t.postType || 'text' : undefined,
         likes: t.likes,
         replies: t.replies,
         reposts: t.reposts,
@@ -260,7 +295,7 @@
     };
   }
 
-  SIT.x = { extractTweets, extractViewer, classify, toRecords, parseArticle, isMine };
+  SIT.x = { extractTweets, extractViewer, extractFollowers, typeOfTweet, classify, toRecords, parseArticle, isMine };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = SIT;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

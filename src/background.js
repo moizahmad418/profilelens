@@ -2,7 +2,7 @@
 // a frozen copy of your stats for every finished scan.
 'use strict';
 
-if (typeof importScripts === 'function') importScripts('lib/common.js', 'lib/stats.js');
+if (typeof importScripts === 'function') importScripts('lib/common.js', 'lib/stats.js', 'lib/insights.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const HISTORY_LIMIT = 20;
@@ -17,6 +17,9 @@ const DEFAULT_SETTINGS = {
   xHandle: '',
   linkedinProfile: '',
   expandComments: true,
+  goals: { post: 0, comment: 0, reply: 0 }, // per week; 0 = not set
+  autoScan: { enabled: false, hour: 8, days: 7, linkedin: true, x: true },
+  reminders: { enabled: false, hours: 24 },
 };
 
 // Whether tabs outside a scan report your own new comments and replies (never added to
@@ -118,9 +121,22 @@ function findLinkedInTwin(c, rec) {
   return null;
 }
 
+// The account a record belongs to, so stats of two accounts on one site stay apart.
+function ownerOf(identity, platform) {
+  const id = identity && identity[platform];
+  if (!id) return null;
+  return platform === 'x' ? (id.id || (id.handle ? '@' + String(id.handle).toLowerCase() : null)) : (id.profileId || id.slug || null);
+}
+
+async function currentOwners() {
+  const { identity = {} } = await chrome.storage.local.get('identity');
+  return { x: ownerOf(identity, 'x'), linkedin: ownerOf(identity, 'linkedin') };
+}
+
 function upsertRecords(incoming) {
   return serialized(async () => {
     const c = await loadCache();
+    const owners = await currentOwners();
     const now = Date.now();
     let added = 0;
     let updated = 0;
@@ -137,6 +153,7 @@ function upsertRecords(incoming) {
       if (!old && !rec.kind) continue; // partial updates only apply to known items
       const merged = mergeRecord(old, rec, now);
       merged.id = key;
+      if (!merged.owner && owners[rec.platform]) merged.owner = owners[rec.platform];
       if (!old) {
         added++;
         indexTwin(c.twins, merged);
@@ -177,6 +194,14 @@ function setIdentity(platform, identity) {
     next.updatedAt = Date.now();
     all[platform] = next;
     await chrome.storage.local.set({ identity: all });
+    // Items scanned before the account was known belong to it.
+    const owner = ownerOf(all, platform);
+    if (owner) {
+      const c = await loadCache();
+      let n = 0;
+      for (const id in c.records) if (c.records[id].platform === platform && !c.records[id].owner) { c.records[id].owner = owner; n++; }
+      if (n) { c.dirty = true; scheduleWrite(); }
+    }
     return { ok: true, identity: next };
   });
 }
@@ -244,6 +269,8 @@ function recordHistory(scan) {
       range: scan.range || null,
       pausedMs: scan.pausedMs || 0,
       found: scan.found || 0,
+      owner: scan.owner || null,
+      auto: !!scan.auto,
       itemCount: Object.keys(records).length,
       totals,
       waiting,
@@ -253,6 +280,250 @@ function recordHistory(scan) {
     await chrome.storage.local.set({ scanHistory: history, scanCounter: n, ['snap:' + id]: { id, takenAt: scan.finishedAt, records } });
     if (removed.length) await chrome.storage.local.remove(removed.map((h) => 'snap:' + h.id));
     return entry;
+  });
+}
+
+// ---------- followers ----------
+
+const FOLLOWER_SAMPLES = 400;
+
+// One sample per day and platform, from what the scan tab sees.
+function setFollowers(platform, count) {
+  return serialized(async () => {
+    if ((platform !== 'x' && platform !== 'linkedin') || !Number.isFinite(Number(count))) return { ok: false };
+    const { followers = {} } = await chrome.storage.local.get('followers');
+    const list = (followers[platform] || []).filter((h) => h && typeof h.at === 'number');
+    const now = Date.now();
+    const day = new Date(now).setHours(0, 0, 0, 0);
+    const last = list[list.length - 1];
+    if (last && new Date(last.at).setHours(0, 0, 0, 0) === day) Object.assign(last, { at: now, count: Number(count) });
+    else list.push({ at: now, count: Number(count) });
+    followers[platform] = list.slice(-FOLLOWER_SAMPLES);
+    await chrome.storage.local.set({ followers });
+    return { ok: true };
+  });
+}
+
+// ---------- automatic scans and reminders ----------
+
+const AUTO_ALARM = 'auto-scan';
+const REMIND_ALARM = 'reminders';
+
+// The next time-of-day after now, in local time.
+function nextAt(hour, now) {
+  const d = new Date(now || Date.now());
+  d.setHours(hour, 0, 0, 0);
+  if (d.getTime() <= (now || Date.now())) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+async function applySchedules() {
+  if (!chrome.alarms) return;
+  const settings = await getSettings();
+  const auto = Object.assign({}, DEFAULT_SETTINGS.autoScan, settings.autoScan);
+  const rem = Object.assign({}, DEFAULT_SETTINGS.reminders, settings.reminders);
+  if (auto.enabled && (auto.linkedin || auto.x)) {
+    await chrome.alarms.create(AUTO_ALARM, { when: nextAt(Number(auto.hour) || 0), periodInMinutes: 24 * 60 });
+  } else {
+    await chrome.alarms.clear(AUTO_ALARM);
+  }
+  if (rem.enabled) await chrome.alarms.create(REMIND_ALARM, { delayInMinutes: 1, periodInMinutes: 60 });
+  else await chrome.alarms.clear(REMIND_ALARM);
+}
+
+async function runAutoScan() {
+  const settings = await getSettings();
+  const auto = Object.assign({}, DEFAULT_SETTINGS.autoScan, settings.autoScan);
+  if (!auto.enabled) return;
+  const sites = ['linkedin', 'x'].filter((p) => auto[p]);
+  if (!sites.length) return;
+  const running = await getScan();
+  if (scanActive(running)) return; // never interrupt a scan you started
+  const first = sites.shift();
+  await startScan(first, false, { type: 'days', days: Number(auto.days) || 7 }, { on: true, next: sites });
+}
+
+// Something has waited for your reply longer than the set number of hours: one notification
+// per item, at most one notification an hour.
+async function runReminders() {
+  if (!chrome.notifications) return;
+  const settings = await getSettings();
+  const rem = Object.assign({}, DEFAULT_SETTINGS.reminders, settings.reminders);
+  if (!rem.enabled) return;
+  const c = await loadCache();
+  const { notified = {} } = await chrome.storage.local.get('notified');
+  const now = Date.now();
+  const limit = now - (Number(rem.hours) || 24) * 3600e3;
+  const convo = SIT.stats.conversations(c.records);
+  const due = [];
+  for (const e of convo.values()) {
+    for (const o of e.pending) {
+      if (typeof o.createdAt !== 'number' || o.createdAt > limit || o.createdAt < now - 14 * DAY || notified[o.id]) continue;
+      due.push(o);
+    }
+  }
+  if (!due.length) return;
+  due.sort((a, b) => b.createdAt - a.createdAt);
+  for (const o of due) notified[o.id] = now;
+  for (const k of Object.keys(notified)) if (now - notified[k] > 30 * DAY) delete notified[k];
+  await chrome.storage.local.set({ notified });
+  const who = due[0].authorName || due[0].author || 'Someone';
+  const site = due[0].platform === 'x' ? 'X' : 'LinkedIn';
+  const message = due.length === 1
+    ? who + ' answered you on ' + site + ' ' + SIT.timeAgo(due[0].createdAt, now) + ' and is still waiting for your reply.'
+    : due.length + ' replies are waiting for you, the latest from ' + who + ' on ' + site + ' ' + SIT.timeAgo(due[0].createdAt, now) + '.';
+  try {
+    await chrome.notifications.create('pl-reminder-' + now, {
+      type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon-128.png'), title: 'Waiting for your reply', message, priority: 0,
+    });
+    await chrome.storage.session.set({ reminderUrl: due[0].url || null });
+  } catch (_) { /* notifications may be blocked */ }
+}
+
+if (chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === AUTO_ALARM) runAutoScan().catch(() => {});
+    else if (alarm.name === REMIND_ALARM) runReminders().catch(() => {});
+  });
+}
+if (chrome.notifications && chrome.notifications.onClicked) {
+  chrome.notifications.onClicked.addListener(async (id) => {
+    if (!String(id).startsWith('pl-reminder-')) return;
+    const { reminderUrl } = await chrome.storage.session.get('reminderUrl');
+    if (reminderUrl) chrome.tabs.create({ url: reminderUrl });
+    chrome.notifications.clear(id);
+  });
+}
+
+// ---------- backup and restore ----------
+
+const BACKUP_KEYS = ['records', 'meta', 'identity', 'scanHistory', 'scanCounter', 'scanCounters', 'visits', 'followers', 'notified', 'followers', 'settings', 'ui', 'commentedRefs', 'engageHidden', 'draftStore', 'pageCache', 'xPageCache'];
+
+async function makeBackup() {
+  await serialized(writeNow);
+  const all = await chrome.storage.local.get(null);
+  const data = {};
+  for (const k of Object.keys(all)) if (BACKUP_KEYS.includes(k) || k.startsWith('snap:')) data[k] = all[k];
+  return { version: chrome.runtime.getManifest().version, exportedAt: Date.now(), data };
+}
+
+// mode 'replace' drops what is here first; 'merge' adds what is missing and keeps the
+// higher impression counts.
+function restoreBackup(backup, mode) {
+  return serialized(async () => {
+    const data = backup && backup.data;
+    if (!data || typeof data !== 'object' || (data.records && typeof data.records !== 'object')) return { ok: false, error: 'This file is not a Profile Lens backup.' };
+    const incoming = {};
+    for (const k of Object.keys(data)) if ((BACKUP_KEYS.includes(k) && k !== 'settings') || k.startsWith('snap:')) incoming[k] = data[k];
+    if (mode === 'replace') {
+      const all = await chrome.storage.local.get(null);
+      const drop = Object.keys(all).filter((k) => (BACKUP_KEYS.includes(k) && k !== 'settings' && k !== 'ui') || k.startsWith('snap:'));
+      await chrome.storage.local.remove(drop);
+      await chrome.storage.local.set(incoming);
+    } else {
+      const cur = await chrome.storage.local.get(null);
+      const merged = {};
+      const records = Object.assign({}, cur.records || {});
+      for (const id of Object.keys(incoming.records || {})) {
+        const a = records[id];
+        const b = incoming.records[id];
+        if (!a) records[id] = b;
+        else if (typeof a.impressions === 'number' && typeof b.impressions === 'number' && b.impressions > a.impressions) records[id] = Object.assign({}, a, { impressions: b.impressions });
+      }
+      merged.records = records;
+      const seen = new Set((cur.scanHistory || []).map((h) => h.id));
+      merged.scanHistory = (cur.scanHistory || []).concat((incoming.scanHistory || []).filter((h) => h && !seen.has(h.id)))
+        .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, HISTORY_LIMIT);
+      for (const k of Object.keys(incoming)) {
+        if (k.startsWith('snap:') && !cur[k] && merged.scanHistory.some((h) => 'snap:' + h.id === k)) merged[k] = incoming[k];
+      }
+      merged.scanCounter = Math.max(cur.scanCounter || 0, incoming.scanCounter || 0, merged.scanHistory.length);
+      merged.followers = {};
+      for (const p of ['x', 'linkedin']) {
+        const byDay = new Map();
+        for (const h of ((cur.followers || {})[p] || []).concat((incoming.followers || {})[p] || [])) if (h && typeof h.at === 'number') byDay.set(new Date(h.at).setHours(0, 0, 0, 0), h);
+        merged.followers[p] = Array.from(byDay.values()).sort((a, b) => a.at - b.at).slice(-FOLLOWER_SAMPLES);
+      }
+      for (const k of ['visits', 'commentedRefs', 'engageHidden', 'pageCache', 'xPageCache', 'draftStore']) {
+        if (incoming[k]) merged[k] = Object.assign({}, incoming[k], cur[k] || {});
+      }
+      if (!cur.identity && incoming.identity) merged.identity = incoming.identity;
+      await chrome.storage.local.set(merged);
+    }
+    if (data.settings && typeof data.settings === 'object') {
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      const keep = Object.assign({}, data.settings);
+      delete keep.anthropicKey;
+      await chrome.storage.local.set({ settings: mode === 'replace' ? Object.assign({}, keep, { theme: settings.theme || keep.theme }) : Object.assign({}, keep, settings) });
+    }
+    cache = null;
+    await applySchedules();
+    const { records = {} } = await chrome.storage.local.get('records');
+    return { ok: true, items: Object.keys(records).length };
+  });
+}
+
+// ---------- accounts ----------
+
+// Every account seen in the data: how many items and scans each has.
+async function listAccounts() {
+  await serialized(writeNow);
+  const { records = {}, scanHistory = [], identity = {} } = await chrome.storage.local.get(['records', 'scanHistory', 'identity']);
+  const owners = { x: ownerOf(identity, 'x'), linkedin: ownerOf(identity, 'linkedin') };
+  const map = new Map();
+  const entry = (platform, owner) => {
+    const key = platform + ':' + (owner || '');
+    return map.get(key) || map.set(key, { platform, owner: owner || null, items: 0, scans: 0, current: (owner || null) === owners[platform], label: null }).get(key);
+  };
+  for (const r of Object.values(records)) if (r && r.platform) entry(r.platform, r.owner || null).items++;
+  for (const h of scanHistory) if (h && h.platform) entry(h.platform, h.owner || null).scans++;
+  for (const e of map.values()) {
+    if (e.current && identity[e.platform]) {
+      const id = identity[e.platform];
+      e.label = e.platform === 'x' ? (id.handle ? '@' + id.handle : id.id) : (id.name || id.slug || id.profileId);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function removeAccount(platform, owner) {
+  return serialized(async () => {
+    const c = await loadCache();
+    let removed = 0;
+    for (const id of Object.keys(c.records)) {
+      const r = c.records[id];
+      if (r.platform === platform && (r.owner || null) === (owner || null)) { delete c.records[id]; removed++; }
+    }
+    c.twins = new Map();
+    for (const id in c.records) indexTwin(c.twins, c.records[id]);
+    c.dirty = true;
+    await writeNow();
+    const { scanHistory = [] } = await chrome.storage.local.get('scanHistory');
+    const drop = scanHistory.filter((h) => h.platform === platform && (h.owner || null) === (owner || null));
+    if (drop.length) {
+      await chrome.storage.local.set({ scanHistory: scanHistory.filter((h) => !drop.includes(h)) });
+      await chrome.storage.local.remove(drop.map((h) => 'snap:' + h.id));
+    }
+    return { ok: true, removed, scans: drop.length };
+  });
+}
+
+// Records from before accounts were told apart belong to whoever is signed in now.
+function stampOwners() {
+  return serialized(async () => {
+    const c = await loadCache();
+    const owners = await currentOwners();
+    let n = 0;
+    for (const id in c.records) {
+      const r = c.records[id];
+      if (!r.owner && owners[r.platform]) { r.owner = owners[r.platform]; n++; }
+    }
+    if (n) { c.dirty = true; await writeNow(); }
+    const { scanHistory = [] } = await chrome.storage.local.get('scanHistory');
+    let changed = false;
+    for (const h of scanHistory) if (h && !h.owner && owners[h.platform]) { h.owner = owners[h.platform]; changed = true; }
+    if (changed) await chrome.storage.local.set({ scanHistory });
+    return { ok: true, stamped: n };
   });
 }
 
@@ -280,6 +551,24 @@ async function finishScan(scan, status, extra) {
   if (status === 'done') scan.progress = 1;
   await setScan(scan);
   await recordHistory(scan);
+  if (scan.auto) await afterAutoScan(scan, status);
+}
+
+// An automatic scan moves on to the next site in the same window, then closes it.
+async function afterAutoScan(scan, status) {
+  const next = status === 'done' || status === 'failed' ? (scan.autoNext || []).slice() : [];
+  const platform = next.shift();
+  if (platform && SCAN_STEPS[platform]) {
+    const settings = await getSettings();
+    const days = Number(settings.autoScan && settings.autoScan.days) || 7;
+    setTimeout(() => {
+      startScan(platform, false, { type: 'days', days }, { on: true, windowId: scan.windowId, next }).catch(() => {});
+    }, 800);
+    return;
+  }
+  if (scan.windowId != null && chrome.windows && chrome.windows.remove) {
+    setTimeout(() => chrome.windows.remove(scan.windowId).catch(() => {}), 1500);
+  }
 }
 
 function linkedinSlug(settings, identity) {
@@ -324,7 +613,8 @@ function scanWindow(range, forceFull, now) {
   return { cutoffTs: Math.min(bounds.start, now), mode: 'range', rangeLabel: label, range: clean };
 }
 
-async function startScan(platform, forceFull, pickedRange) {
+// auto: { on, windowId, next } for scans that run by themselves in a small window.
+async function startScan(platform, forceFull, pickedRange, auto) {
   if (!SCAN_STEPS[platform]) return { ok: false, error: 'Unknown platform' };
   const previous = await getScan();
   if (scanActive(previous)) {
@@ -337,12 +627,27 @@ async function startScan(platform, forceFull, pickedRange) {
   const now = Date.now();
   const range = scanWindow(pickedRange, forceFull, now);
   // Open a blank tab first so the scan is saved before the site's content script asks for it.
-  const tab = await chrome.tabs.create({ url: 'about:blank', active: true });
+  let tab;
+  if (auto && auto.on) {
+    if (auto.windowId != null) {
+      tab = await chrome.tabs.create({ url: 'about:blank', windowId: auto.windowId, active: true });
+    } else {
+      const win = await chrome.windows.create({ url: 'about:blank', type: 'popup', width: 560, height: 700, focused: false });
+      auto.windowId = win.id;
+      tab = (win.tabs && win.tabs[0]) || (await chrome.tabs.query({ windowId: win.id }))[0];
+    }
+  } else {
+    tab = await chrome.tabs.create({ url: 'about:blank', active: true });
+  }
   const scan = {
     platform,
     steps: SCAN_STEPS[platform].slice(),
     index: 0,
     tabId: tab.id,
+    owner: (await currentOwners())[platform] || null,
+    auto: !!(auto && auto.on),
+    windowId: auto && auto.windowId != null ? auto.windowId : null,
+    autoNext: (auto && auto.next) || [],
     startedAt: now,
     cutoffTs: range.cutoffTs,
     mode: range.mode,
@@ -583,7 +888,7 @@ async function clearAll() {
     cache = null;
     const all = await chrome.storage.local.get(null);
     const keys = Object.keys(all).filter((k) => k.startsWith('snap:'));
-    await chrome.storage.local.remove(keys.concat(['records', 'meta', 'identity', 'scanHistory', 'scanCounter', 'visits']));
+    await chrome.storage.local.remove(keys.concat(['records', 'meta', 'identity', 'scanHistory', 'scanCounter', 'visits', 'followers', 'notified']));
   });
   return { ok: true };
 }
@@ -610,13 +915,34 @@ async function handle(msg, sender) {
       return setVisits(msg.visits);
     case 'settings:get':
       return getSettings();
+    case 'settings:changed':
+      await applySchedules();
+      return { ok: true };
+    case 'followers:set':
+      return sender && sender.tab ? setFollowers(msg.platform, msg.count) : { ok: false };
+    case 'backup:make':
+      return sender && sender.tab ? { ok: false } : makeBackup();
+    case 'backup:restore':
+      return sender && sender.tab ? { ok: false } : restoreBackup(msg.backup, msg.mode === 'merge' ? 'merge' : 'replace');
+    case 'accounts:list':
+      return sender && sender.tab ? { ok: false } : listAccounts();
+    case 'accounts:remove':
+      return sender && sender.tab ? { ok: false } : removeAccount(msg.platform, msg.owner || null);
+    case 'accounts:stamp':
+      return sender && sender.tab ? { ok: false } : stampOwners();
+    case 'auto:run':
+      return sender && sender.tab ? { ok: false } : runAutoScan().then(() => ({ ok: true }));
+    case 'reminders:check':
+      return sender && sender.tab ? { ok: false } : runReminders().then(() => ({ ok: true }));
     case 'data:clear':
       return sender && sender.tab ? { ok: false } : clearAll();
   }
   return null;
 }
 
-dropUnscannedRecords().catch(() => {});
+dropUnscannedRecords().then(stampOwners).then(applySchedules).catch(() => {});
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => applySchedules().catch(() => {}));
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => applySchedules().catch(() => {}));
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   handle(msg, sender).then(sendResponse, (err) => sendResponse({ error: String(err && err.message || err) }));

@@ -259,8 +259,9 @@
 
     // Leaving the tab pauses the scan; coming back resumes it. The short wait ignores the
     // page's own unload when the scan moves to its next page.
+    // A scan that runs by itself (in its own small window) never pauses for being hidden.
     document.addEventListener('visibilitychange', () => {
-      if (stopped || leaving) return;
+      if (stopped || leaving || task.auto) return;
       if (document.visibilityState === 'hidden') {
         setTimeout(() => {
           if (!stopped && !leaving && !paused && document.visibilityState === 'hidden') SIT.send({ type: 'scan:pause', auto: true });
@@ -272,7 +273,7 @@
 
     // A scan page that loads in the background (you switched away while it opened) waits too.
     setTimeout(() => {
-      if (!stopped && !leaving && !paused && document.visibilityState === 'hidden') SIT.send({ type: 'scan:pause', auto: true });
+      if (!stopped && !leaving && !paused && !task.auto && document.visibilityState === 'hidden') SIT.send({ type: 'scan:pause', auto: true });
     }, 700);
 
     // The background answers a step change with the scan (more steps), null (finished) or
@@ -307,10 +308,10 @@
       const step = adapter.steps[stepName];
       const stepText = 'Step ' + (task.index + 1) + ' of ' + task.steps.length + ': ' + (step ? step.label : stepId);
       SIT.overlay.show({
-        title: 'Profile Lens · Scanning ' + adapter.label + (task.rangeLabel ? ' (' + task.rangeLabel + ')' : ''),
+        title: 'Profile Lens · ' + (task.auto ? 'Automatic scan of ' : 'Scanning ') + adapter.label + (task.rangeLabel ? ' (' + task.rangeLabel + ')' : ''),
         line1: stepText,
         line2: 'Finding your account…',
-        notice: TAB_NOTICE,
+        notice: task.auto ? 'This window closes by itself when the scan is done. Closing it stops the scan.' : TAB_NOTICE,
         progress: task.index / task.steps.length,
         onStop: stop,
         onPause: togglePause,

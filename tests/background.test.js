@@ -25,11 +25,28 @@ function loadBackground(initialLocal) {
     remove: async (keys) => { for (const k of [].concat(keys)) delete areas[name][k]; },
   });
 
+  const windows = { created: [], removed: [] };
+  const notifications = [];
   const chrome = {
+    windows: {
+      create: async (o) => {
+        const w = { id: 500 + windows.created.length, url: o.url, tabs: [] };
+        const tab = { id: tabs.length + 1, url: o.url, windowId: w.id };
+        tabs.push(tab); w.tabs.push(tab); windows.created.push(w);
+        return w;
+      },
+      update: async () => {},
+      remove: async (id) => { windows.removed.push(id); },
+    },
+    alarms: { create: async () => {}, clear: async () => {}, onAlarm: { addListener() {} } },
+    notifications: { create: async (id, o) => { notifications.push(Object.assign({ id }, o)); }, clear: () => {}, onClicked: { addListener() {} } },
     storage: { local: area('local'), session: area('session') },
-    runtime: { onMessage: { addListener: (fn) => { onMessage = fn; } } },
+    runtime: {
+      onMessage: { addListener: (fn) => { onMessage = fn; } }, onStartup: { addListener() {} }, onInstalled: { addListener() {} },
+      getManifest: () => ({ version: '1.4.0' }), getURL: (p) => p,
+    },
     tabs: {
-      create: async ({ url }) => { const tab = { id: tabs.length + 1, url }; tabs.push(tab); return tab; },
+      create: async ({ url, windowId }) => { const tab = { id: tabs.length + 1, url, windowId }; tabs.push(tab); return tab; },
       update: async (id, { url }) => {
         if (!tabs[id - 1] || tabs[id - 1].closed) throw new Error('No tab with id ' + id);
         if (url) tabs[id - 1].url = url;
@@ -51,12 +68,14 @@ function loadBackground(initialLocal) {
   };
 
   const code = fs.readFileSync(path.join(__dirname, '..', 'src', 'background.js'), 'utf8');
-  const context = { chrome, console, structuredClone, setTimeout, clearTimeout };
+  const context = { chrome, console, structuredClone, setTimeout, clearTimeout, setInterval, clearInterval };
   context.importScripts = (...files) => {
     for (const f of files) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8'), context);
   };
   context.globalThis = context;
   vm.createContext(context);
+  // Scans run back to back here; keep the clock moving so no two share a start time.
+  vm.runInContext('(() => { const real = Date.now; let last = 0; Date.now = () => (last = Math.max(real(), last + 1)); })();', context);
   vm.runInContext(code, context);
 
   // Objects created inside the vm context have their own prototypes; compare plain copies.
@@ -64,11 +83,21 @@ function loadBackground(initialLocal) {
   const send = (msg, sender = {}) => new Promise((resolve) => onMessage(msg, sender, (v) => resolve(plain(v))));
   const flush = () => send({ type: 'records:flush' });
   return {
-    send, flush, areas, tabs, sentToTabs, tabReplies,
+    send, flush, areas, tabs, sentToTabs, tabReplies, windows, notifications,
     removeTab: (id) => { if (tabs[id - 1]) tabs[id - 1].closed = true; return onRemoved(id); },
     openTab: (url) => chrome.tabs.create({ url }),
     setActiveTab: (id) => { activeTab = tabs[id - 1]; },
   };
+}
+
+// Waits until fn() is truthy, for work the background does on a timer.
+async function until(fn, ms) {
+  const end = Date.now() + (ms || 2000);
+  for (;;) {
+    if (await fn()) return;
+    if (Date.now() > end) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 25));
+  }
 }
 
 const post = (over) => Object.assign({
@@ -469,4 +498,116 @@ test('only the popup can start scans or clear data', async () => {
   assert.equal((await bg.send({ type: 'scan:start', platform: 'x' }, page)).ok, false);
   assert.equal((await bg.send({ type: 'data:clear' }, page)).ok, false);
   assert.equal(bg.tabs.length, 0);
+});
+
+test('follower counts from the scan tab are kept, one sample per day', async () => {
+  const bg = loadBackground();
+  const tab = { tab: { id: 3 } };
+  await bg.send({ type: 'followers:set', platform: 'x', count: 100 }, tab);
+  await bg.send({ type: 'followers:set', platform: 'x', count: 104 }, tab);
+  await bg.send({ type: 'followers:set', platform: 'linkedin', count: 'lots' }, tab);
+  assert.equal(bg.areas.local.followers.x.length, 1, 'the same day is replaced');
+  assert.equal(bg.areas.local.followers.x[0].count, 104);
+  assert.equal(bg.areas.local.followers.linkedin, undefined, 'a non-number is ignored');
+  assert.equal((await bg.send({ type: 'followers:set', platform: 'x', count: 5 })).ok, false, 'only tabs report followers');
+});
+
+test('records and scans belong to the account signed in; another account keeps its own', async () => {
+  const bg = loadBackground();
+  await bg.send({ type: 'identity:set', platform: 'x', identity: { id: '1', handle: 'first' } });
+  let { scan } = await bg.send({ type: 'scan:start', platform: 'x' });
+  await bg.send({ type: 'records:upsert', records: [post({ id: 'x:1', ref: '1' })] }, { tab: { id: scan.tabId } });
+  await bg.send({ type: 'scan:stop' });
+  await bg.flush();
+  assert.equal(bg.areas.local.records['x:1'].owner, '1');
+  assert.equal(bg.areas.local.scanHistory[0].owner, '1');
+
+  await bg.send({ type: 'identity:set', platform: 'x', identity: { id: '2', handle: 'second' } });
+  ({ scan } = await bg.send({ type: 'scan:start', platform: 'x' }));
+  await bg.send({ type: 'records:upsert', records: [post({ id: 'x:2', ref: '2' })] }, { tab: { id: scan.tabId } });
+  await bg.send({ type: 'scan:stop' });
+  await bg.flush();
+  assert.equal(bg.areas.local.records['x:2'].owner, '2');
+  assert.ok(bg.areas.local.records['x:1'], 'the first account’s data is kept');
+
+  const accounts = await bg.send({ type: 'accounts:list' });
+  assert.deepEqual(accounts.map((a) => [a.platform, a.owner, a.items, a.scans, a.current]).sort(), [['x', '1', 1, 1, false], ['x', '2', 1, 1, true]]);
+  const res = await bg.send({ type: 'accounts:remove', platform: 'x', owner: '1' });
+  assert.deepEqual([res.removed, res.scans], [1, 1]);
+  assert.equal(bg.areas.local.records['x:1'], undefined);
+  assert.equal(bg.areas.local.scanHistory.length, 1);
+});
+
+test('records from before accounts were told apart are stamped with the current account', async () => {
+  const bg = loadBackground({ records: { 'x:1': post() }, scanHistory: [{ id: 'scan-1', n: 1, platform: 'x', status: 'done' }], scanOnly: true });
+  await bg.send({ type: 'identity:set', platform: 'x', identity: { id: '9', handle: 'me' } });
+  await bg.send({ type: 'accounts:stamp' });
+  await bg.flush();
+  assert.equal(bg.areas.local.records['x:1'].owner, '9');
+  assert.equal(bg.areas.local.scanHistory[0].owner, '9');
+});
+
+test('a backup holds the data and restoring it merges or replaces', async () => {
+  const bg = loadBackground({ records: { 'x:1': post({ impressions: 50 }) }, scanHistory: [{ id: 'scan-1', n: 1, platform: 'x', status: 'done', finishedAt: 5 }], 'snap:scan-1': { id: 'scan-1', records: {} }, followers: { x: [{ at: 1, count: 10 }] }, settings: { theme: 'x', goals: { post: 2 } }, scanOnly: true });
+  const backup = await bg.send({ type: 'backup:make' });
+  assert.equal(backup.data.records['x:1'].impressions, 50);
+  assert.ok(backup.data['snap:scan-1']);
+  assert.equal(backup.data.settings.goals.post, 2);
+
+  const other = loadBackground({ records: { 'x:1': post({ impressions: 80 }), 'x:2': post({ id: 'x:2', ref: '2' }) }, scanOnly: true, settings: { theme: 'keep' } });
+  let res = await other.send({ type: 'backup:restore', backup, mode: 'merge' });
+  assert.equal(res.ok, true);
+  assert.equal(other.areas.local.records['x:1'].impressions, 80, 'merge keeps the higher count');
+  assert.ok(other.areas.local.records['x:2'], 'merge keeps what was here');
+  assert.equal(other.areas.local.scanHistory.length, 1);
+  assert.deepEqual(other.areas.local.followers.x, [{ at: 1, count: 10 }]);
+  assert.equal(other.areas.local.settings.theme, 'keep', 'merge keeps this browser’s settings');
+
+  res = await other.send({ type: 'backup:restore', backup, mode: 'replace' });
+  assert.equal(other.areas.local.records['x:2'], undefined, 'replace drops what was here');
+  assert.equal(other.areas.local.records['x:1'].impressions, 50);
+  assert.equal(other.areas.local.settings.goals.post, 2);
+  assert.equal((await other.send({ type: 'backup:restore', backup: { nope: 1 } })).ok, false);
+  assert.equal((await other.send({ type: 'backup:make' }, { tab: { id: 1 } })).ok, false, 'not from a page');
+});
+
+test('an automatic scan runs the sites in turn in its own window, then closes it', async () => {
+  const bg = loadBackground({ settings: { autoScan: { enabled: true, hour: 8, days: 3, linkedin: true, x: true } }, scanOnly: true });
+  await bg.send({ type: 'auto:run' });
+  let scan = await bg.send({ type: 'scan:status' });
+  assert.equal(scan.platform, 'linkedin');
+  assert.equal(scan.auto, true);
+  assert.equal(scan.rangeLabel, '3D');
+  assert.deepEqual(scan.autoNext, ['x']);
+  assert.equal(bg.windows.created.length, 1, 'a small window of its own');
+  const tab = { tab: { id: scan.tabId } };
+  await bg.send({ type: 'scan:advance', found: 1 }, tab);
+  assert.equal(await bg.send({ type: 'scan:advance', found: 1 }, tab), null);
+  await until(async () => (await bg.send({ type: 'scan:status' })).platform === 'x', 4000);
+  scan = await bg.send({ type: 'scan:status' });
+  assert.equal(scan.status, 'running');
+  assert.equal(scan.windowId, bg.windows.created[0].id, 'same window');
+  const xtab = { tab: { id: scan.tabId } };
+  for (let i = 0; i < 3; i++) await bg.send({ type: 'scan:advance', found: 1 }, xtab);
+  await until(() => bg.windows.removed.length === 1, 4000);
+  assert.equal(bg.areas.local.scanHistory.length, 2);
+  assert.ok(bg.areas.local.scanHistory.every((h) => h.auto && h.status === 'done'));
+});
+
+test('reminders notify about responses waiting longer than the set hours, once each', async () => {
+  const now = Date.now();
+  const bg = loadBackground({
+    settings: { reminders: { enabled: true, hours: 4 } }, scanOnly: true,
+    records: {
+      'x:1': post({ id: 'x:1', ref: '1', kind: 'comment', createdAt: now - 3 * DAY }),
+      'x:2': { id: 'x:2', platform: 'x', ref: '2', kind: 'reply', direction: 'received', parentRef: '1', createdAt: now - 6 * 3600e3, author: '@sam', url: 'https://x.com/sam/status/2' },
+      'x:3': { id: 'x:3', platform: 'x', ref: '3', kind: 'reply', direction: 'received', parentRef: '1', createdAt: now - 3600e3, author: '@kim' },
+    },
+  });
+  await bg.send({ type: 'reminders:check' });
+  assert.equal(bg.notifications.length, 1);
+  assert.match(bg.notifications[0].message, /@sam answered you on X 6h ago/);
+  assert.equal(bg.areas.session.reminderUrl, 'https://x.com/sam/status/2');
+  await bg.send({ type: 'reminders:check' });
+  assert.equal(bg.notifications.length, 1, 'not again for the same reply');
 });

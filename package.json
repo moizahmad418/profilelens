@@ -1,6 +1,6 @@
 {
   "name": "profile-lens",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "private": true,
   "description": "Profile Lens: browser extension that totals impressions on your LinkedIn and X posts, comments and replies.",
   "scripts": {

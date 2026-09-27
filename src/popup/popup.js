@@ -23,6 +23,9 @@
     hot: -1,
     history: [],
     snapshot: null, // { entry, records } while viewing a past scan
+    followers: {}, // platform -> [{ at, count }]
+    ui: {}, // tour done, version seen, digest dismissed
+    why: new Set(), // post ids with the "Why?" panel open
   };
 
   // The dashboard reads either the latest scanned data or a frozen scan snapshot.
@@ -52,12 +55,30 @@
   // ---------- data ----------
 
   async function loadData() {
-    const data = await chrome.storage.local.get(['records', 'identity', 'settings', 'meta', 'scanHistory']);
-    state.records = data.records || {};
+    const data = await chrome.storage.local.get(['records', 'identity', 'settings', 'meta', 'scanHistory', 'followers', 'ui']);
     state.identity = data.identity || {};
+    state.records = ownRecords(data.records || {}, state.identity);
+    state.followers = data.followers || {};
+    state.ui = data.ui || {};
     state.settings = Object.assign({ xHandle: '', linkedinProfile: '', expandComments: true }, data.settings || {});
     state.meta = data.meta || {};
-    state.history = data.scanHistory || [];
+    state.history = (data.scanHistory || []).filter((h) => h && (!h.owner || h.owner === ownerOf(state.identity, h.platform)));
+  }
+
+  // The account a record belongs to; stats of another account on the same site stay out.
+  function ownerOf(identity, platform) {
+    const id = identity && identity[platform];
+    if (!id) return null;
+    return platform === 'x' ? (id.id || (id.handle ? '@' + String(id.handle).toLowerCase() : null)) : (id.profileId || id.slug || null);
+  }
+  function ownRecords(records, identity) {
+    const owners = { x: ownerOf(identity, 'x'), linkedin: ownerOf(identity, 'linkedin') };
+    const out = {};
+    for (const id in records) {
+      const r = records[id];
+      if (!r || !r.owner || !owners[r.platform] || r.owner === owners[r.platform]) out[id] = r;
+    }
+    return out;
   }
 
   async function loadScan() {
@@ -202,6 +223,7 @@
     renderBreakdown(summary);
     renderReceived(summary);
     renderItems(summary);
+    if (SIT.features) SIT.features.onRender(summary);
   }
 
   // Stats only come from scans, so a range that reaches further back than any finished
@@ -351,6 +373,19 @@
       if (c.threadSize >= 3) meta.appendChild(el('span', 'chip-mini', 'Thread · ' + c.threadSize));
       if (c.pending.length) meta.appendChild(el('span', 'chip-mini', 'Needs reply'));
     }
+    if (r.kind === 'post' && SIT.features && !state.snapshot) {
+      const why = el('button', 'link-btn why-btn', state.why.has(r.id) ? 'Hide' : 'Why?');
+      why.type = 'button';
+      why.title = 'How this post compares with your usual, and what might explain it';
+      why.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.why.has(r.id)) state.why.delete(r.id); else state.why.add(r.id);
+        renderItems(state.summary);
+      });
+      meta.appendChild(document.createTextNode(' · '));
+      meta.appendChild(why);
+    }
     main.appendChild(meta);
     const li = el('li', 'item');
     li.appendChild(itemLink(r.url, [badge(r), main, valueCell(r)]));
@@ -367,7 +402,7 @@
     main.appendChild(text);
 
     const meta = el('span', 'item-meta');
-    const parts = [SIT.timeAgo(latest.createdAt, nowTs())];
+    const parts = ['waiting ' + SIT.timeAgo(latest.createdAt, nowTs()).replace(/ ago$/, '').replace(/^just now$/, 'a moment')];
     const kindWord = mineItem.kind === 'reply' ? 'reply' : 'comment';
     meta.appendChild(document.createTextNode(parts.join(' · ') + ' · to your ' + kindWord + ' '));
     const quote = mineItem.placeholder ? '(not scanned yet)' : '“' + SIT.truncate(mineItem.text || '', 38) + '”';
@@ -432,6 +467,7 @@
           plural(summary.threads[kind], 'became a thread', 'became threads')
         : '';
     }
+    if (sub === 'needs' && SIT.features) insight = [insight, SIT.features.replyTimeText()].filter(Boolean).join(' ');
     $('insight').textContent = insight;
     $('insight').hidden = !insight;
     renderLevelLegend();
@@ -451,7 +487,10 @@
       list.appendChild(el('li', 'items-empty', 'No ' + TYPE_WORD[kind] + ' in this period.'));
       return;
     }
-    for (const r of items.slice(0, 30)) list.appendChild(allRow(r));
+    for (const r of items.slice(0, 30)) {
+      list.appendChild(allRow(r));
+      if (r.kind === 'post' && state.why.has(r.id) && SIT.features) list.appendChild(SIT.features.whyRow(r));
+    }
   }
 
   // ---------- chart ----------
@@ -740,14 +779,16 @@
 
   // ---------- settings view ----------
 
+  const VIEWS = ['stats', 'insights', 'scans', 'settings', 'features'];
+  const SUBVIEWS = ['settings', 'features']; // reached from the gear, not the tabs
+
   function showView(view) {
     state.view = view;
-    $('view-stats').hidden = view !== 'stats';
-    $('view-scans').hidden = view !== 'scans';
-    $('view-settings').hidden = view !== 'settings';
-    $('view-nav').hidden = view === 'settings';
-    $('btn-back').hidden = view !== 'settings';
-    $('btn-settings').hidden = view === 'settings';
+    for (const v of VIEWS) $('view-' + v).hidden = view !== v;
+    const sub = SUBVIEWS.includes(view);
+    $('view-nav').hidden = sub;
+    $('btn-back').hidden = !sub;
+    $('btn-settings').hidden = sub;
     for (const b of $('view-nav').querySelectorAll('button')) {
       const on = b.dataset.view === view;
       b.setAttribute('aria-selected', String(on));
@@ -755,6 +796,7 @@
     }
     if (view === 'settings') renderSettings();
     if (view === 'scans') renderScans();
+    if (SIT.features) SIT.features.onView(view);
   }
 
   function renderSettings() {
@@ -773,6 +815,7 @@
     const list = Object.values(state.records);
     const li2 = list.filter((r) => r.platform === 'linkedin').length;
     $('data-summary').textContent = plural(list.length, 'item') + ' stored · LinkedIn ' + SIT.formatFull(li2) + ' · X ' + SIT.formatFull(list.length - li2);
+    if (SIT.features) SIT.features.renderSettings();
   }
 
   let saveTimer = null;
@@ -897,7 +940,7 @@
     chart.addEventListener('blur', () => setHot(-1));
 
     $('btn-settings').addEventListener('click', () => showView('settings'));
-    $('btn-back').addEventListener('click', () => { showView('stats'); render(); });
+    $('btn-back').addEventListener('click', () => { showView(state.view === 'features' ? 'settings' : 'stats'); if (state.view === 'stats') render(); });
     $('view-nav').addEventListener('click', (e) => {
       const b = e.target.closest('button[data-view]');
       if (!b) return;
@@ -952,10 +995,17 @@
   async function init() {
     loadPrefs();
     bind();
+    // features.js may load before or after this point; whichever comes second wires up.
+    const bridge = { state, el, plural, meter, openUrl, render, showView, renderFooter, download, loadData, nowTs, dataRecords, loaded: false };
+    SIT.popupBridge = bridge;
+    if (SIT.features) SIT.features.init(bridge);
+    await chrome.runtime.sendMessage({ type: 'accounts:stamp' }).catch(() => null);
     await Promise.all([loadData(), loadScan()]);
+    bridge.loaded = true;
+    if (SIT.features) SIT.features.ready();
     showView('stats');
     render();
   }
 
-  init();
+  init().catch((err) => { console.error(err); const st = $('status'); if (st) st.textContent = 'Something went wrong while opening the popup. Reload it, or clear the extension data in Settings.'; });
 })();

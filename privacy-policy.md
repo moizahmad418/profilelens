@@ -1,6 +1,6 @@
 # Privacy Policy — Profile Lens
 
-Last updated: 22 September 2026
+Last updated: 26 September 2026
 
 Profile Lens is a browser extension that totals the impressions on your own LinkedIn and X
 (formerly Twitter) posts, comments and replies. It also informs you which comment and replies in a thread you need to reply.
@@ -20,7 +20,8 @@ yourself, Profile Lens reads, from the pages your browser has already loaded:
 - the impression or view counts shown for them;
 - the comments and replies other people leave on your content, so it can show which
   conversations are waiting for your reply;
-- your own profile name, handle or profile URL, so it can tell your content from other people's.
+- your own profile name, handle or profile URL, so it can tell your content from other people's;
+- your own follower count, so it can show how it changes over time.
 
 It reads no other websites, and it reads nothing about other people's accounts beyond the
 public replies and comments that appear on your own content.
@@ -40,12 +41,18 @@ sends no data to the developer or to any third party.
 
 Open the extension popup, go to Settings and use **Clear data** to delete everything the
 extension has stored. Removing the extension from your browser also deletes its storage. You
-can export your data to CSV or JSON at any time from Settings.
+can export your data to CSV or JSON at any time from Settings, and save or restore a full backup file
+there too. A backup is a plain file on your computer; it goes only where you put it.
 
 ## Permissions
 
 - **storage / unlimitedStorage** — to keep the collected numbers, your settings and your past
   scans on your own device.
+- **alarms** — only for the optional automatic daily scan, which you turn on in the Scans tab.
+  It runs the same scan you would start yourself, at the time you picked.
+- **notifications** — only for the optional reminders, which you turn on in Settings. A reminder
+  is shown on your own computer when someone has waited for your reply longer than the time you
+  set. Nothing about it is sent anywhere.
 - **Access to `linkedin.com`, `x.com` and `twitter.com`** — the extension only works on those
   sites, and only reads them. It never posts, comments, likes, follows or changes anything on
   your accounts.
